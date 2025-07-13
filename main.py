@@ -1,17 +1,11 @@
 #!/usr/bin/env python3
-"""Simple Grid Trading Bot - Clean and Working Version"""
+"""Updated main.py - Complete Integration with User Trading System"""
 
 import asyncio
 import logging
-import sqlite3
 import sys
-import threading
-import time
 from pathlib import Path
-from typing import Dict, Optional
 
-from binance.client import Client
-from binance.exceptions import BinanceAPIException
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -24,10 +18,11 @@ from analytics.conversion_tracker import ConversionTracker
 from config import Config
 from database.db_setup import DatabaseSetup
 from handlers.complete_handler import CompleteHandler
+from services.bot_orchestrator import BotOrchestrator
 
 
-class SimpleGridBot:
-    """Simple grid trading bot with optional Telegram integration"""
+class GridTradingBot:
+    """Complete Grid Trading Bot with Per-User API Integration"""
 
     def __init__(self):
         self.config = Config()
@@ -36,16 +31,14 @@ class SimpleGridBot:
         # Initialize components
         self.db_setup = DatabaseSetup()
         self.conversion_tracker = ConversionTracker()
+        self.bot_orchestrator = BotOrchestrator()
         self.handler = CompleteHandler(self.conversion_tracker)
 
         # Bot state
         self.running = False
-        self.grids: Dict[str, Dict] = {}
+        self.telegram_app = None
 
-        # Initialize Binance client
-        self.binance_client = self._init_binance_client()
-
-        self.logger.info("🤖 Simple Grid Trading Bot initialized")
+        self.logger.info("🤖 GridTrader Pro initialized with per-user API support")
 
     def _setup_logging(self) -> logging.Logger:
         """Setup logging configuration"""
@@ -61,24 +54,6 @@ class SimpleGridBot:
         )
         return logging.getLogger(__name__)
 
-    def _init_binance_client(self) -> Optional[Client]:
-        """Initialize Binance client if API keys are available"""
-        try:
-            if hasattr(self.config, "BINANCE_API_KEY") and self.config.BINANCE_API_KEY:
-                return Client(
-                    self.config.BINANCE_API_KEY,
-                    self.config.BINANCE_SECRET_KEY,
-                    testnet=self.config.ENVIRONMENT == "development",
-                )
-            else:
-                self.logger.warning(
-                    "Binance API keys not configured - running in simulation mode"
-                )
-                return None
-        except Exception as e:
-            self.logger.error(f"Failed to initialize Binance client: {e}")
-            return None
-
     def _init_database(self):
         """Initialize database tables"""
         try:
@@ -88,127 +63,39 @@ class SimpleGridBot:
             self.logger.error(f"❌ Database initialization failed: {e}")
             raise
 
-    def get_current_price(self, symbol: str) -> Optional[float]:
-        """Get current price for a trading pair"""
-        if not self.binance_client:
-            # Return a fake price for simulation
-            fake_prices = {
-                "ADAUSDT": 0.50,
-                "AVAXUSDT": 25.00,
-                "BTCUSDT": 45000.00,
-                "ETHUSDT": 3000.00,
-            }
-            return fake_prices.get(symbol, 1.00)
-
-        try:
-            ticker = self.binance_client.get_symbol_ticker(symbol=symbol)
-            return float(ticker["price"])
-        except Exception as e:
-            self.logger.error(f"Error getting price for {symbol}: {e}")
-            return None
-
-    def place_grid_order(
-        self, symbol: str, side: str, price: float, quantity: float
-    ) -> Optional[Dict]:
-        """Place a grid order"""
-        if not self.binance_client:
-            # Simulation mode
-            self.logger.info(
-                f"SIMULATION: {side} {quantity:.4f} {symbol} at ${price:.4f}"
-            )
-            return {"orderId": int(time.time() * 1000), "status": "NEW"}
-
-        try:
-            if side == "BUY":
-                order = self.binance_client.order_limit_buy(
-                    symbol=symbol, quantity=quantity, price=str(price)
-                )
-            else:
-                order = self.binance_client.order_limit_sell(
-                    symbol=symbol, quantity=quantity, price=str(price)
-                )
-
-            self.logger.info(
-                f"✅ Order placed: {side} {quantity:.4f} {symbol} at ${price:.4f}"
-            )
-            return order
-
-        except BinanceAPIException as e:
-            self.logger.error(f"Binance API error: {e}")
-            return None
-        except Exception as e:
-            self.logger.error(f"Order placement error: {e}")
-            return None
-
-    def log_trade(self, symbol: str, side: str, quantity: float, price: float):
-        """Log trade to database"""
-        try:
-            with sqlite3.connect("data/gridtrader.db") as conn:
-                # Check if the trades table has telegram_id column
-                cursor = conn.cursor()
-                cursor.execute("PRAGMA table_info(trades)")
-                columns = [column[1] for column in cursor.fetchall()]
-
-                if "telegram_id" in columns:
-                    # Table has telegram_id column - insert with NULL telegram_id
-                    conn.execute(
-                        """
-                        INSERT INTO trades (symbol, side, quantity, price, value, timestamp, telegram_id)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                        (
-                            symbol,
-                            side,
-                            quantity,
-                            price,
-                            quantity * price,
-                            time.time(),
-                            None,
-                        ),
-                    )
-                else:
-                    # Table doesn't have telegram_id column - insert without it
-                    conn.execute(
-                        """
-                        INSERT INTO trades (symbol, side, quantity, price, value, timestamp)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                        (symbol, side, quantity, price, quantity * price, time.time()),
-                    )
-
-            self.logger.info(
-                f"📊 Trade logged: {side} {quantity:.4f} {symbol} at ${price:.4f}"
-            )
-        except Exception as e:
-            self.logger.error(f"Failed to log trade: {e}")
-
-    def trading_loop(self):
-        """Main trading loop (synchronous)"""
-        self.logger.info("🔄 Starting trading loop")
-
-        # Simple demo: just log some fake trades periodically
-        trade_count = 0
-        symbols = ["ADAUSDT", "AVAXUSDT"]
+    async def user_bot_management_loop(self):
+        """Main loop to manage user trading bots"""
+        self.logger.info("🔄 Starting user bot management loop")
 
         while self.running:
             try:
-                for symbol in symbols:
-                    current_price = self.get_current_price(symbol)
-                    if current_price:
-                        # Simulate some trading activity
-                        side = "BUY" if trade_count % 2 == 0 else "SELL"
-                        quantity = 10.0 if symbol == "ADAUSDT" else 0.5
+                # Update all active user bots
+                await self.bot_orchestrator.update_all_bots()
 
-                        # Log a simulated trade every 10 cycles
-                        if trade_count % 10 == 0:
-                            self.log_trade(symbol, side, quantity, current_price)
+                # Log status
+                active_bots = self.bot_orchestrator.get_all_active_bots()
+                if active_bots:
+                    self.logger.info(f"🤖 Managing {len(active_bots)} active user bots")
 
-                trade_count += 1
-                time.sleep(30)  # Check every 30 seconds
+                    # Log some statistics
+                    total_trades = sum(
+                        bot.get("total_trades", 0) for bot in active_bots.values()
+                    )
+                    total_profit = sum(
+                        bot.get("total_profit", 0) for bot in active_bots.values()
+                    )
+
+                    if total_trades > 0:
+                        self.logger.info(
+                            f"📊 Total trades: {total_trades}, Total profit: ${total_profit:.2f}"
+                        )
+
+                # Wait 30 seconds before next update
+                await asyncio.sleep(30)
 
             except Exception as e:
-                self.logger.error(f"Error in trading loop: {e}")
-                time.sleep(60)  # Wait longer on error
+                self.logger.error(f"Error in bot management loop: {e}")
+                await asyncio.sleep(60)  # Wait longer on error
 
     async def telegram_start(self, update, context):
         """Handle /start command"""
@@ -231,70 +118,124 @@ class SimpleGridBot:
         except Exception as e:
             self.logger.error(f"Error in message handler: {e}")
 
-    def start_telegram_bot(self):
-        """Start Telegram bot in separate thread"""
+    def setup_telegram_bot(self):
+        """Setup Telegram bot application"""
         if not self.config.TELEGRAM_BOT_TOKEN:
             self.logger.warning(
                 "Telegram bot token not configured - skipping Telegram bot"
             )
-            return
+            return None
 
-        def run_telegram():
+        try:
+            # Create Telegram application
+            self.telegram_app = (
+                Application.builder().token(self.config.TELEGRAM_BOT_TOKEN).build()
+            )
+
+            # Add handlers
+            self.telegram_app.add_handler(CommandHandler("start", self.telegram_start))
+            self.telegram_app.add_handler(CallbackQueryHandler(self.telegram_callback))
+            self.telegram_app.add_handler(
+                MessageHandler(filters.TEXT & ~filters.COMMAND, self.telegram_message)
+            )
+
+            self.logger.info("📱 Telegram bot configured successfully")
+            return self.telegram_app
+
+        except Exception as e:
+            self.logger.error(f"Failed to setup Telegram bot: {e}")
+            return None
+
+    async def run_bot(self):
+        """Run both bot management and Telegram bot concurrently"""
+        tasks = []
+
+        # Add bot management loop
+        management_task = asyncio.create_task(self.user_bot_management_loop())
+        tasks.append(management_task)
+
+        # Add Telegram bot task if configured
+        if self.telegram_app:
             try:
-                # Create new event loop for this thread
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+                # Initialize and start Telegram bot
+                await self.telegram_app.initialize()
+                await self.telegram_app.start()
 
-                app = (
-                    Application.builder().token(self.config.TELEGRAM_BOT_TOKEN).build()
+                # Create polling task
+                telegram_task = asyncio.create_task(
+                    self.telegram_app.updater.start_polling()
                 )
+                tasks.append(telegram_task)
 
-                # Add handlers
-                app.add_handler(CommandHandler("start", self.telegram_start))
-                app.add_handler(CallbackQueryHandler(self.telegram_callback))
-                app.add_handler(
-                    MessageHandler(
-                        filters.TEXT & ~filters.COMMAND, self.telegram_message
-                    )
-                )
-
-                self.logger.info("📱 Starting Telegram bot...")
-                app.run_polling()
+                self.logger.info("✅ Both user bot management and Telegram bot started")
 
             except Exception as e:
-                self.logger.error(f"Telegram bot error: {e}")
+                self.logger.error(f"Failed to start Telegram bot: {e}")
+                self.logger.info("🤖 Continuing with bot management only")
+        else:
+            self.logger.info("🤖 Starting bot management only (no Telegram bot)")
 
-        # Start Telegram bot in a separate thread
-        telegram_thread = threading.Thread(target=run_telegram, daemon=True)
-        telegram_thread.start()
-        self.logger.info("📱 Telegram bot started in background")
+        try:
+            # Run all tasks concurrently
+            await asyncio.gather(*tasks)
+        except KeyboardInterrupt:
+            self.logger.info("🛑 Bot stopped by user")
+        except Exception as e:
+            self.logger.error(f"❌ Bot error: {e}")
+        finally:
+            # Cleanup
+            await self.stop_bot()
 
-    def start(self):
-        """Start the bot"""
-        self.logger.info("🚀 Starting Simple Grid Trading Bot")
+    async def stop_bot(self):
+        """Stop the bot gracefully"""
+        self.logger.info("🛑 Stopping GridTrader Pro...")
+        self.running = False
+
+        # Stop all user bots first
+        await self.bot_orchestrator.shutdown_all_bots()
+
+        # Stop Telegram bot
+        if self.telegram_app:
+            try:
+                await self.telegram_app.updater.stop()
+                await self.telegram_app.stop()
+                await self.telegram_app.shutdown()
+                self.logger.info("📱 Telegram bot stopped")
+            except Exception as e:
+                self.logger.error(f"Error stopping Telegram bot: {e}")
+
+        self.logger.info("✅ GridTrader Pro stopped")
+
+    async def start_async(self):
+        """Async start method"""
+        self.logger.info("🚀 Starting GridTrader Pro with Per-User Trading")
 
         try:
             # Initialize database
             self._init_database()
 
-            # Start Telegram bot in background
-            self.start_telegram_bot()
+            # Setup Telegram bot
+            self.setup_telegram_bot()
 
-            # Start trading loop
+            # Start main loop
             self.running = True
-            self.trading_loop()
+            await self.run_bot()
 
+        except Exception as e:
+            self.logger.error(f"❌ Startup error: {e}")
+            raise
+
+    def start(self):
+        """Main start method - runs async event loop"""
+        try:
+            # Run the async bot
+            asyncio.run(self.start_async())
         except KeyboardInterrupt:
             self.logger.info("🛑 Bot stopped by user")
         except Exception as e:
             self.logger.error(f"❌ Bot error: {e}")
         finally:
             self.running = False
-
-    def stop(self):
-        """Stop the bot"""
-        self.logger.info("🛑 Stopping bot...")
-        self.running = False
 
 
 def main():
@@ -304,8 +245,17 @@ def main():
         print("❌ Invalid configuration. Please check your environment variables.")
         sys.exit(1)
 
+    print("🚀 Starting GridTrader Pro MVP")
+    print("=" * 50)
+    print("✅ Per-user API key support")
+    print("✅ Individual trading bot instances")
+    print("✅ Real & demo trading modes")
+    print("✅ Telegram interface")
+    print("✅ Ready for 50+ users")
+    print("=" * 50)
+
     # Create and start bot
-    bot = SimpleGridBot()
+    bot = GridTradingBot()
     bot.start()
 
 
