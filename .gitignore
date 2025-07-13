@@ -303,3 +303,14 @@ jspm_packages/
 
 # TernJS port file
 .tern-port
+
+# Security - NEVER commit
+.env
+.env.*
+*.log
+data/logs/
+*.db
+data/gridtrader.db
+*_key.txt
+secrets/
+
