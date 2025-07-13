@@ -314,3 +314,22 @@ data/gridtrader.db
 *_key.txt
 secrets/
 
+
+# Security - NEVER commit these files
+.env
+.env.*
+*.key
+*.pem
+*_key.txt
+config_local.py
+secrets/
+
+# Logs that might contain sensitive data
+*.log
+data/logs/
+logs/
+
+# Database files
+*.db
+*.sqlite*
+data/gridtrader.db
