@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Complete Enhanced Handler with Mode Switching & API Cancellation - FULL FILE"""
+"""Complete Improved Handler with Smart API Management - FULL FILE"""
 
 import logging
 from datetime import datetime, timedelta
@@ -12,7 +12,7 @@ from services.bot_orchestrator import BotOrchestrator
 
 
 class CompleteHandler:
-    """Complete enhanced handler with easy mode switching and cancellation"""
+    """Complete improved handler with smart API management - avoids repeated setup"""
 
     def __init__(self, conversion_tracker):
         self.user_repo = UserRepository()
@@ -20,6 +20,30 @@ class CompleteHandler:
         self.bot_orchestrator = BotOrchestrator()
         self.user_states = {}
         self.logger = logging.getLogger(__name__)
+
+    def _has_real_api_keys(self, user) -> bool:
+        """Check if user has real (non-demo) API keys"""
+        if not user.binance_api_key or not user.binance_secret_key:
+            return False
+
+        # Check for demo keywords
+        api_key_lower = user.binance_api_key.lower()
+        if any(keyword in api_key_lower for keyword in ["demo", "test", "fake"]):
+            return False
+
+        # Check length (real Binance keys are 64 chars)
+        if len(user.binance_api_key) < 60:
+            return False
+
+        return True
+
+    def _has_demo_api_keys(self, user) -> bool:
+        """Check if user has demo API keys"""
+        if not user.binance_api_key:
+            return False
+
+        api_key_lower = user.binance_api_key.lower()
+        return any(keyword in api_key_lower for keyword in ["demo", "test", "fake"])
 
     async def handle_start(self, update, context):
         """Main start with proper menu"""
@@ -85,12 +109,11 @@ Ready to start?"""
         if bot_status["running"]:
             bot_info = f"\n🤖 Bot: Active ({bot_status['total_trades']} trades)"
 
-        # Current mode info
-        if user.binance_api_key:
-            if "demo" in user.binance_api_key:
-                mode_info = "\n🎮 Mode: Demo Trading"
-            else:
-                mode_info = "\n🟢 Mode: Real Trading"
+        # Smart mode detection
+        if self._has_real_api_keys(user):
+            mode_info = "\n🟢 Mode: Real Trading"
+        elif self._has_demo_api_keys(user):
+            mode_info = "\n🎮 Mode: Demo Trading"
         else:
             mode_info = "\n❌ Mode: Not Setup"
 
@@ -130,7 +153,7 @@ Choose an option:"""
             )
 
     async def handle_callback(self, update, context):
-        """Handle callback queries with enhanced mode switching"""
+        """Handle callback queries with improved API management"""
         query = update.callback_query
         await query.answer()
 
@@ -148,18 +171,24 @@ Choose an option:"""
             await self._show_dashboard(query, user_id)
         elif action == "show_settings":
             await self._show_settings(query, user_id)
+        elif action == "manage_api_keys":  # NEW: Manage existing keys
+            await self._manage_api_keys(query, user_id)
         elif action == "setup_api_keys":
             await self._start_api_setup(query, user_id)
         elif action == "api_setup_real":
             await self._api_setup_real(query, user_id)
         elif action == "use_demo_keys":
             await self._use_demo_keys(query, user_id)
-        elif action == "cancel_api_input":  # NEW: Cancel API input
+        elif action == "cancel_api_input":
             await self._cancel_api_input(query, user_id)
-        elif action == "switch_to_demo":  # NEW: Switch to demo
+        elif action == "switch_to_demo":
             await self._switch_to_demo_mode(query, user_id)
-        elif action == "switch_to_real":  # NEW: Switch to real
-            await self._switch_to_real_mode(query, user_id)
+        elif action == "switch_to_real":
+            await self._smart_switch_to_real(query, user_id)  # NEW: Smart switching
+        elif action == "reset_api_keys":  # NEW: Reset keys
+            await self._reset_api_keys(query, user_id)
+        elif action == "confirm_reset_keys":  # NEW: Confirm reset
+            await self._confirm_reset_keys(query, user_id)
         elif action.startswith("execute_trade_"):
             await self._execute_trade(query, action)
         elif action.startswith("stop_bot_"):
@@ -167,71 +196,157 @@ Choose an option:"""
         else:
             await query.edit_message_text("🔧 Feature coming soon!")
 
-    async def _cancel_api_input(self, query, user_id):
-        """Cancel API key input flow"""
-        # Clear any existing state
-        if user_id in self.user_states:
-            del self.user_states[user_id]
-            self.logger.info(f"Cancelled API input for user {user_id}")
+    async def _smart_switch_to_real(self, query, user_id):
+        """Smart switch to real mode - checks if user already has real keys"""
+        user = self.user_repo.get_user(user_id)
 
-        message = """❌ **API Setup Cancelled**
+        if self._has_real_api_keys(user):
+            # User already has real API keys, just switch mode
+            await self._confirm_real_mode_switch(query, user_id)
+        else:
+            # User needs to set up real API keys
+            await self._api_setup_real(query, user_id)
 
-No changes were made to your account.
+    async def _manage_api_keys(self, query, user_id):
+        """NEW: Manage existing API keys without forcing re-setup"""
+        user = self.user_repo.get_user(user_id)
 
-What would you like to do?"""
+        if self._has_real_api_keys(user):
+            current_status = "🟢 **Real API Keys Configured**"
+            key_info = (
+                f"API Key: {user.binance_api_key[:10]}...{user.binance_api_key[-4:]}"
+            )
+        elif self._has_demo_api_keys(user):
+            current_status = "🎮 **Demo Keys Active**"
+            key_info = "Using demo mode for safe testing"
+        else:
+            current_status = "❌ **No API Keys**"
+            key_info = "No trading keys configured"
+
+        message = f"""🔐 **API Key Management**
+
+{current_status}
+
+{key_info}
+
+**Options:**"""
+
+        keyboard = []
+
+        if self._has_real_api_keys(user):
+            # User has real keys
+            keyboard.extend(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "🎮 Switch to Demo Mode", callback_data="switch_to_demo"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "🔄 Reset API Keys", callback_data="reset_api_keys"
+                        )
+                    ],
+                ]
+            )
+        elif self._has_demo_api_keys(user):
+            # User has demo keys
+            keyboard.extend(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "🟢 Switch to Real Trading", callback_data="switch_to_real"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "🔄 Reset to No Keys", callback_data="reset_api_keys"
+                        )
+                    ],
+                ]
+            )
+        else:
+            # No keys
+            keyboard.extend(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "🟢 Setup Real Trading", callback_data="api_setup_real"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "🎮 Use Demo Mode", callback_data="use_demo_keys"
+                        )
+                    ],
+                ]
+            )
+
+        keyboard.extend(
+            [
+                [
+                    InlineKeyboardButton(
+                        "🔙 Back to Settings", callback_data="show_settings"
+                    )
+                ],
+            ]
+        )
+
+        await query.edit_message_text(
+            message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+        )
+
+    async def _reset_api_keys(self, query, user_id):
+        """NEW: Reset API keys with confirmation"""
+        message = """⚠️ **Reset API Keys**
+
+This will remove your current API keys and stop any active trading.
+
+Are you sure you want to continue?"""
 
         keyboard = [
-            [InlineKeyboardButton("🎮 Use Demo Mode", callback_data="use_demo_keys")],
             [
                 InlineKeyboardButton(
-                    "🔐 Try API Setup Again", callback_data="setup_api_keys"
+                    "✅ Yes, Reset Keys", callback_data="confirm_reset_keys"
                 )
             ],
-            [InlineKeyboardButton("📊 Dashboard", callback_data="main_dashboard")],
-            [InlineKeyboardButton("🔙 Main Menu", callback_data="back_to_main")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="manage_api_keys")],
         ]
 
         await query.edit_message_text(
             message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
         )
 
-    async def _switch_to_demo_mode(self, query, user_id):
-        """Switch user to demo mode"""
+    async def _confirm_reset_keys(self, query, user_id):
+        """Confirm and execute API key reset"""
         try:
             # Stop any active trading first
             await self.bot_orchestrator.stop_user_bot(user_id)
 
-            # Set demo keys
+            # Reset API keys
             user = self.user_repo.get_user(user_id)
-            user.binance_api_key = "demo_api_key_for_testing"
-            user.binance_secret_key = "demo_secret_key_for_testing"
+            user.binance_api_key = None
+            user.binance_secret_key = None
             self.user_repo.update_user(user)
 
-            self.conversion_tracker.track_event(user_id, "switched_to_demo")
+            message = """✅ **API Keys Reset**
 
-            message = """🎮 **Switched to Demo Mode**
+Your API keys have been removed and trading has been stopped.
 
-✅ Demo trading is now active
-✅ Use real market prices safely
-✅ Test all features risk-free
-✅ No real money involved
-
-**Ready to trade?**
-Type `BTC 100` or `TUT 100` to start!"""
+What would you like to do next?"""
 
             keyboard = [
                 [
                     InlineKeyboardButton(
-                        "🚀 Start Demo Trading", callback_data="show_trading_guide"
+                        "🟢 Setup Real Trading", callback_data="api_setup_real"
                     )
                 ],
                 [
                     InlineKeyboardButton(
-                        "🟢 Switch to Real Trading", callback_data="switch_to_real"
+                        "🎮 Use Demo Mode", callback_data="use_demo_keys"
                     )
                 ],
                 [InlineKeyboardButton("📊 Dashboard", callback_data="main_dashboard")],
-                [InlineKeyboardButton("🔙 Main Menu", callback_data="back_to_main")],
             ]
 
             await query.edit_message_text(
@@ -241,86 +356,29 @@ Type `BTC 100` or `TUT 100` to start!"""
             )
 
         except Exception as e:
-            self.logger.error(f"Error switching to demo mode for user {user_id}: {e}")
-            await query.edit_message_text(
-                "❌ Error switching to demo mode. Please try again."
-            )
-
-    async def _switch_to_real_mode(self, query, user_id):
-        """Switch user to real trading mode"""
-        user = self.user_repo.get_user(user_id)
-
-        # Check if user already has real API keys
-        if user.binance_api_key and "demo" not in user.binance_api_key:
-            # User already has real keys, just confirm switch
-            await self._confirm_real_mode_switch(query, user_id)
-        else:
-            # User needs to set up real API keys
-            await self._api_setup_real(query, user_id)
-
-    async def _confirm_real_mode_switch(self, query, user_id):
-        """Confirm switching to real mode for users with existing API keys"""
-        try:
-            # Stop any active demo trading
-            await self.bot_orchestrator.stop_user_bot(user_id)
-
-            self.conversion_tracker.track_event(user_id, "switched_to_real")
-
-            message = """🟢 **Switched to Real Trading Mode**
-
-✅ Real trading is now active
-✅ Connected to your Binance account
-✅ Real money, real profits
-⚠️ Trade responsibly
-
-**Ready to make real profits?**
-Type `BTC 100` or `TUT 100` to start!"""
-
-            keyboard = [
-                [
-                    InlineKeyboardButton(
-                        "🚀 Start Real Trading", callback_data="show_trading_guide"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        "🎮 Switch to Demo", callback_data="switch_to_demo"
-                    )
-                ],
-                [InlineKeyboardButton("📊 Dashboard", callback_data="main_dashboard")],
-                [InlineKeyboardButton("🔙 Main Menu", callback_data="back_to_main")],
-            ]
-
-            await query.edit_message_text(
-                message,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode="Markdown",
-            )
-
-        except Exception as e:
-            self.logger.error(f"Error switching to real mode for user {user_id}: {e}")
-            await query.edit_message_text(
-                "❌ Error switching to real mode. Please try again."
-            )
+            self.logger.error(f"Error resetting API keys for user {user_id}: {e}")
+            await query.edit_message_text("❌ Error resetting keys. Please try again.")
 
     async def _show_settings(self, query, user_id):
-        """Enhanced settings with mode switching"""
+        """Enhanced settings with smart API management"""
         user = self.user_repo.get_user(user_id)
 
-        # Determine current mode and status
-        if user.binance_api_key:
-            if "demo" in user.binance_api_key:
-                current_mode = "🎮 Demo Mode"
-                switch_button_text = "🟢 Switch to Real Trading"
-                switch_button_action = "switch_to_real"
-            else:
-                current_mode = "🟢 Real Trading Mode"
-                switch_button_text = "🎮 Switch to Demo Mode"
-                switch_button_action = "switch_to_demo"
+        # Smart status detection
+        if self._has_real_api_keys(user):
+            current_mode = "🟢 Real Trading Mode"
+            api_status = "✅ Real API keys configured"
+            main_button_text = "🎮 Switch to Demo Mode"
+            main_button_action = "switch_to_demo"
+        elif self._has_demo_api_keys(user):
+            current_mode = "🎮 Demo Mode"
+            api_status = "🎮 Demo keys active"
+            main_button_text = "🟢 Switch to Real Trading"
+            main_button_action = "switch_to_real"
         else:
             current_mode = "❌ Not Setup"
-            switch_button_text = "🔐 Setup Trading Mode"
-            switch_button_action = "setup_api_keys"
+            api_status = "❌ No API keys configured"
+            main_button_text = "🔐 Setup Trading Keys"
+            main_button_action = "setup_api_keys"
 
         # Get bot status
         bot_status = self.bot_orchestrator.get_user_bot_status(user_id)
@@ -334,6 +392,7 @@ Type `BTC 100` or `TUT 100` to start!"""
         message = f"""⚙️ **Settings**
 
 **Current Mode:** {current_mode}
+**API Status:** {api_status}
 **Capital:** ${user.total_capital:,.2f}
 **Risk Level:** {user.risk_level.title()}
 **Trading Pairs:** {", ".join(user.trading_pairs)}{bot_info}
@@ -341,27 +400,40 @@ Type `BTC 100` or `TUT 100` to start!"""
 Configure your bot:"""
 
         keyboard = [
-            [
-                InlineKeyboardButton(
-                    switch_button_text, callback_data=switch_button_action
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔐 Manage API Keys", callback_data="setup_api_keys"
-                )
-            ],
-            [InlineKeyboardButton("📊 Dashboard", callback_data="main_dashboard")],
-            [InlineKeyboardButton("🔙 Main Menu", callback_data="back_to_main")],
+            [InlineKeyboardButton(main_button_text, callback_data=main_button_action)],
         ]
+
+        # Only show API management if user has keys configured
+        if self._has_real_api_keys(user) or self._has_demo_api_keys(user):
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        "🔐 Manage API Keys", callback_data="manage_api_keys"
+                    )
+                ]
+            )
+
+        keyboard.extend(
+            [
+                [InlineKeyboardButton("📊 Dashboard", callback_data="main_dashboard")],
+                [InlineKeyboardButton("🔙 Main Menu", callback_data="back_to_main")],
+            ]
+        )
 
         await query.edit_message_text(
             message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
         )
 
     async def _start_api_setup(self, query, user_id):
-        """API setup with options - CLEAR ANY EXISTING STATE"""
-        # CRITICAL: Clear any existing user state
+        """API setup - only show if user doesn't have keys"""
+        user = self.user_repo.get_user(user_id)
+
+        # If user already has real keys, don't force setup
+        if self._has_real_api_keys(user):
+            await self._manage_api_keys(query, user_id)
+            return
+
+        # Clear any existing user state
         if user_id in self.user_states:
             self.logger.info(
                 f"Clearing existing user state for {user_id} at API setup start"
@@ -372,11 +444,10 @@ Configure your bot:"""
 
 **Choose setup method:**
 
-**📱 Real API Keys (Mobile):**
+**📱 Real API Keys:**
 • Connect to your actual Binance account
 • Real trading with real money
 • 2-minute mobile setup process
-• Step-by-step mobile app guide
 
 **🎮 Demo Keys:**
 • Test all features safely
@@ -485,6 +556,130 @@ Type `BTC 100` or `TUT 100` to try your first trade!"""
             message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
         )
 
+    async def _cancel_api_input(self, query, user_id):
+        """Cancel API key input flow"""
+        # Clear any existing state
+        if user_id in self.user_states:
+            del self.user_states[user_id]
+            self.logger.info(f"Cancelled API input for user {user_id}")
+
+        message = """❌ **API Setup Cancelled**
+
+No changes were made to your account.
+
+What would you like to do?"""
+
+        keyboard = [
+            [InlineKeyboardButton("🎮 Use Demo Mode", callback_data="use_demo_keys")],
+            [
+                InlineKeyboardButton(
+                    "🔐 Try API Setup Again", callback_data="setup_api_keys"
+                )
+            ],
+            [InlineKeyboardButton("📊 Dashboard", callback_data="main_dashboard")],
+            [InlineKeyboardButton("🔙 Main Menu", callback_data="back_to_main")],
+        ]
+
+        await query.edit_message_text(
+            message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+        )
+
+    async def _switch_to_demo_mode(self, query, user_id):
+        """Switch user to demo mode"""
+        try:
+            # Stop any active trading first
+            await self.bot_orchestrator.stop_user_bot(user_id)
+
+            # Set demo keys
+            user = self.user_repo.get_user(user_id)
+            user.binance_api_key = "demo_api_key_for_testing"
+            user.binance_secret_key = "demo_secret_key_for_testing"
+            self.user_repo.update_user(user)
+
+            self.conversion_tracker.track_event(user_id, "switched_to_demo")
+
+            message = """🎮 **Switched to Demo Mode**
+
+✅ Demo trading is now active
+✅ Use real market prices safely
+✅ Test all features risk-free
+✅ No real money involved
+
+**Ready to trade?**
+Type `BTC 100` or `TUT 100` to start!"""
+
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        "🚀 Start Demo Trading", callback_data="show_trading_guide"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🟢 Switch to Real Trading", callback_data="switch_to_real"
+                    )
+                ],
+                [InlineKeyboardButton("📊 Dashboard", callback_data="main_dashboard")],
+                [InlineKeyboardButton("🔙 Main Menu", callback_data="back_to_main")],
+            ]
+
+            await query.edit_message_text(
+                message,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown",
+            )
+
+        except Exception as e:
+            self.logger.error(f"Error switching to demo mode for user {user_id}: {e}")
+            await query.edit_message_text(
+                "❌ Error switching to demo mode. Please try again."
+            )
+
+    async def _confirm_real_mode_switch(self, query, user_id):
+        """Confirm switching to real mode for users with existing API keys"""
+        try:
+            # Stop any active demo trading
+            await self.bot_orchestrator.stop_user_bot(user_id)
+
+            self.conversion_tracker.track_event(user_id, "switched_to_real")
+
+            message = """🟢 **Switched to Real Trading Mode**
+
+✅ Real trading is now active
+✅ Connected to your Binance account
+✅ Real money, real profits
+⚠️ Trade responsibly
+
+**Ready to make real profits?**
+Type `BTC 100` or `TUT 100` to start!"""
+
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        "🚀 Start Real Trading", callback_data="show_trading_guide"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🎮 Switch to Demo", callback_data="switch_to_demo"
+                    )
+                ],
+                [InlineKeyboardButton("📊 Dashboard", callback_data="main_dashboard")],
+                [InlineKeyboardButton("🔙 Main Menu", callback_data="back_to_main")],
+            ]
+
+            await query.edit_message_text(
+                message,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown",
+            )
+
+        except Exception as e:
+            self.logger.error(f"Error switching to real mode for user {user_id}: {e}")
+            await query.edit_message_text(
+                "❌ Error switching to real mode. Please try again."
+            )
+
     async def _show_dashboard(self, query, user_id):
         """Enhanced dashboard with mode switching"""
         user = self.user_repo.get_user(user_id)
@@ -494,17 +689,16 @@ Type `BTC 100` or `TUT 100` to try your first trade!"""
         bot_status = performance.get("bot_status", {})
 
         # Determine current mode
-        if user.binance_api_key:
-            if "demo" in user.binance_api_key:
-                mode = "🎮 Demo Mode"
-                switch_button = InlineKeyboardButton(
-                    "🟢 Switch to Real", callback_data="switch_to_real"
-                )
-            else:
-                mode = "🟢 Real Trading"
-                switch_button = InlineKeyboardButton(
-                    "🎮 Switch to Demo", callback_data="switch_to_demo"
-                )
+        if self._has_real_api_keys(user):
+            mode = "🟢 Real Trading"
+            switch_button = InlineKeyboardButton(
+                "🎮 Switch to Demo", callback_data="switch_to_demo"
+            )
+        elif self._has_demo_api_keys(user):
+            mode = "🎮 Demo Mode"
+            switch_button = InlineKeyboardButton(
+                "🟢 Switch to Real", callback_data="switch_to_real"
+            )
         else:
             mode = "❌ Not Setup"
             switch_button = InlineKeyboardButton(
@@ -838,7 +1032,7 @@ Perfect! Now copy and send your **API Key**.
                 return
 
             # Determine mode
-            if user.binance_api_key and "demo" not in user.binance_api_key:
+            if self._has_real_api_keys(user):
                 mode = "🟢 Real Trading"
             else:
                 mode = "🎮 Demo Mode"

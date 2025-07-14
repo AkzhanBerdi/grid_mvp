@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enhanced Demo + Real Trading Architecture"""
+"""Enhanced Demo + Real Trading Architecture - FIXED MODE DETECTION"""
 
 import logging
 import time
@@ -20,16 +20,33 @@ class TradingMode:
 
 
 class UserTradingBot:
-    """Universal bot supporting both demo and real trading seamlessly"""
+    """Universal bot supporting both demo and real trading seamlessly - FIXED"""
 
-    def __init__(self, user: User, trading_mode: str = TradingMode.DEMO):
+    def __init__(self, user: User, trading_mode: str = None):
         self.user = user
+
+        # FIXED: Auto-detect trading mode if not specified
+        if trading_mode is None:
+            trading_mode = self._auto_detect_trading_mode()
+
         self.trading_mode = trading_mode
         self.logger = logging.getLogger(f"UniversalBot-{user.telegram_id}")
+
+        # Log the determined mode for debugging
+        self.logger.info(f"🔍 TRADING MODE DETERMINED: {self.trading_mode.upper()}")
+        self.logger.info(
+            f"🔑 API Key Preview: {user.binance_api_key[:15] if user.binance_api_key else 'None'}..."
+        )
 
         # Initialize based on mode
         if self.trading_mode == TradingMode.REAL:
             self.real_client = self._create_real_client()
+            if not self.real_client:
+                self.logger.warning(
+                    "⚠️ Real client creation failed, falling back to demo mode"
+                )
+                self.trading_mode = TradingMode.DEMO
+                self.real_client = None
         else:
             self.real_client = None
 
@@ -52,6 +69,36 @@ class UserTradingBot:
         self.total_profit = 0.0
         self.started_at = None
 
+        # Final mode confirmation
+        mode_name = "REAL" if self.is_real_mode() else "DEMO"
+        self.logger.info(
+            f"✅ Bot initialized in {mode_name} mode for user {user.telegram_id}"
+        )
+
+    def _auto_detect_trading_mode(self) -> str:
+        """Auto-detect trading mode based on user's API keys"""
+        # No API keys = demo mode
+        if not self.user.binance_api_key or not self.user.binance_secret_key:
+            self.logger.info("🎮 No API keys found → Demo mode")
+            return TradingMode.DEMO
+
+        # Check for demo/test keywords in API key
+        api_key_lower = self.user.binance_api_key.lower()
+        if any(keyword in api_key_lower for keyword in ["demo", "test", "fake"]):
+            self.logger.info("🎮 Demo keywords detected in API key → Demo mode")
+            return TradingMode.DEMO
+
+        # Check API key length (real Binance API keys are typically 64 characters)
+        if len(self.user.binance_api_key) < 60:
+            self.logger.info(
+                f"🎮 API key too short ({len(self.user.binance_api_key)} chars) → Demo mode"
+            )
+            return TradingMode.DEMO
+
+        # If we reach here, assume real keys
+        self.logger.info("🟢 Real API keys detected → Real trading mode")
+        return TradingMode.REAL
+
     def _create_public_client(self) -> Client:
         """Create public client for real price data (no auth needed)"""
         try:
@@ -64,24 +111,37 @@ class UserTradingBot:
     def _create_real_client(self) -> Optional[Client]:
         """Create authenticated client for real trading"""
         try:
-            if not self.user.binance_api_key or "demo" in self.user.binance_api_key:
+            if not self.user.binance_api_key or not self.user.binance_secret_key:
+                self.logger.warning("❌ Missing API credentials for real trading")
                 return None
 
+            # Additional validation for real keys
+            if "demo" in self.user.binance_api_key.lower():
+                self.logger.warning(
+                    "❌ Demo keywords found in API key, cannot use for real trading"
+                )
+                return None
+
+            self.logger.info("🔗 Attempting to connect to Binance API...")
             client = Client(
                 self.user.binance_api_key,
                 self.user.binance_secret_key,
                 testnet=False,  # Always mainnet for user keys
             )
 
-            # Test connection
+            # Test connection with a simple API call
             account = client.get_account()
             self.logger.info(
-                f"✅ Real trading client connected for user {self.user.telegram_id}"
+                f"✅ Real trading client connected successfully for user {self.user.telegram_id}"
             )
+            self.logger.info(f"📊 Account has {len(account['balances'])} assets")
             return client
 
+        except BinanceAPIException as e:
+            self.logger.error(f"❌ Binance API error: {e.message} (Code: {e.code})")
+            return None
         except Exception as e:
-            self.logger.error(f"Real client creation failed: {e}")
+            self.logger.error(f"❌ Real client creation failed: {e}")
             return None
 
     def is_demo_mode(self) -> bool:
@@ -196,26 +256,63 @@ class UserTradingBot:
                 self.logger.error("❌ No real trading client available")
                 return None
 
-            # [Include your existing precision validation and formatting here]
-            # This is where you'd put the validate_and_format_order logic
+            self.logger.info(
+                f"🟢 PLACING REAL ORDER: {side} {quantity:.8f} {symbol} at ${price:.8f}"
+            )
 
+            # Format quantity and price properly for Binance
+            # Get symbol info for proper precision
+            try:
+                symbol_info = self.real_client.get_symbol_info(symbol)
+                quantity_precision = 8  # Default
+                price_precision = 8  # Default
+
+                for filter_item in symbol_info["filters"]:
+                    if filter_item["filterType"] == "LOT_SIZE":
+                        # Calculate precision from stepSize
+                        step_size = float(filter_item["stepSize"])
+                        quantity_precision = len(
+                            str(step_size).split(".")[-1].rstrip("0")
+                        )
+                    elif filter_item["filterType"] == "PRICE_FILTER":
+                        # Calculate precision from tickSize
+                        tick_size = float(filter_item["tickSize"])
+                        price_precision = len(str(tick_size).split(".")[-1].rstrip("0"))
+
+                # Format with proper precision
+                formatted_quantity = f"{quantity:.{quantity_precision}f}"
+                formatted_price = f"{price:.{price_precision}f}"
+
+            except Exception as e:
+                self.logger.warning(
+                    f"Could not get symbol precision, using defaults: {e}"
+                )
+                formatted_quantity = f"{quantity:.8f}"
+                formatted_price = f"{price:.8f}"
+
+            # Place the actual order
             if side == "BUY":
                 order = self.real_client.order_limit_buy(
-                    symbol=symbol, quantity=f"{quantity:.8f}", price=f"{price:.8f}"
+                    symbol=symbol, quantity=formatted_quantity, price=formatted_price
                 )
             else:
                 order = self.real_client.order_limit_sell(
-                    symbol=symbol, quantity=f"{quantity:.8f}", price=f"{price:.8f}"
+                    symbol=symbol, quantity=formatted_quantity, price=formatted_price
                 )
 
             order["mode"] = "real"
             self.logger.info(
-                f"✅ REAL ORDER: {side} {quantity:.8f} {symbol} at ${price:.8f}"
+                f"✅ REAL ORDER PLACED: {side} {formatted_quantity} {symbol} at ${formatted_price} (ID: {order['orderId']})"
             )
             return order
 
         except BinanceAPIException as e:
-            self.logger.error(f"❌ Real order failed: {e}")
+            self.logger.error(
+                f"❌ Real order failed - Binance API error: {e.message} (Code: {e.code})"
+            )
+            return None
+        except Exception as e:
+            self.logger.error(f"❌ Real order failed - General error: {e}")
             return None
 
     async def _update_demo_balance(
@@ -260,56 +357,6 @@ class UserTradingBot:
 
         except Exception as e:
             self.logger.error(f"Error updating demo balance: {e}")
-
-    async def switch_to_real_mode(self) -> bool:
-        """Switch from demo to real trading"""
-        try:
-            if self.trading_mode == TradingMode.REAL:
-                self.logger.info("Already in real trading mode")
-                return True
-
-            # Check if user has real API keys
-            if not self.user.binance_api_key or "demo" in self.user.binance_api_key:
-                self.logger.error("❌ No real API keys available")
-                return False
-
-            # Create real client
-            self.real_client = self._create_real_client()
-            if not self.real_client:
-                return False
-
-            # Stop current demo trading
-            if self.active:
-                await self.stop_trading()
-
-            # Switch mode
-            self.trading_mode = TradingMode.REAL
-            self.logger.info(
-                f"✅ Switched to REAL trading mode for user {self.user.telegram_id}"
-            )
-            return True
-
-        except Exception as e:
-            self.logger.error(f"Error switching to real mode: {e}")
-            return False
-
-    async def switch_to_demo_mode(self) -> bool:
-        """Switch from real to demo trading"""
-        try:
-            # Stop current real trading
-            if self.active and self.trading_mode == TradingMode.REAL:
-                await self.stop_trading()
-
-            # Switch mode
-            self.trading_mode = TradingMode.DEMO
-            self.logger.info(
-                f"✅ Switched to DEMO mode for user {self.user.telegram_id}"
-            )
-            return True
-
-        except Exception as e:
-            self.logger.error(f"Error switching to demo mode: {e}")
-            return False
 
     async def start_grid_trading(self, symbol: str, capital: float) -> bool:
         """Universal grid trading start"""
@@ -420,6 +467,7 @@ class UserTradingBot:
                         symbol = grid_order["order"]["symbol"]
                         self.real_client.cancel_order(symbol=symbol, orderId=order_id)
                         cancelled += 1
+                        self.logger.info(f"❌ Cancelled real order {order_id}")
                     except Exception as e:
                         self.logger.error(f"Error canceling order: {e}")
 
@@ -454,7 +502,8 @@ class UserTradingBot:
                     "demo_positions": self.demo_positions,
                     "can_switch_to_real": bool(
                         self.user.binance_api_key
-                        and "demo" not in self.user.binance_api_key
+                        and "demo" not in self.user.binance_api_key.lower()
+                        and len(self.user.binance_api_key) >= 60
                     ),
                 }
             )
