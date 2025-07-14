@@ -1,7 +1,7 @@
 # startup.sh
 #!/bin/bash
 
-echo "🚀 Starting GridTrader Pro MVP..."
+echo "🚀 Starting GridTrader Pro Client Service..."
 
 # Colors for output
 RED='\033[0;31m'
@@ -56,23 +56,19 @@ fi
 print_status "Activating virtual environment..."
 source venv/bin/activate
 
-# Check if requirements are installed
-if [ ! -f "venv/lib/python*/site-packages/telegram*" ]; then
-    print_status "Installing Python dependencies..."
-    pip install --upgrade pip
-    pip install -r requirements.txt
-    
-    if [ $? -ne 0 ]; then
-        print_error "Failed to install dependencies"
-        exit 1
-    fi
-else
-    print_status "Dependencies already installed"
+# Install/update dependencies
+print_status "Installing dependencies..."
+pip install --upgrade pip
+pip install -r requirements.txt
+
+if [ $? -ne 0 ]; then
+    print_error "Failed to install dependencies"
+    exit 1
 fi
 
 # Initialize database
 print_status "Initializing database..."
-python database/db_setup.py
+python database/db_setup.py --init
 
 if [ $? -ne 0 ]; then
     print_error "Database initialization failed"
@@ -88,39 +84,35 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Run health check
-print_status "Running health check..."
-python health_check.py > /dev/null 2>&1
-
-if [ $? -ne 0 ]; then
-    print_warning "Health check failed, but continuing startup..."
-fi
+# Show database stats
+print_status "Database statistics..."
+python database/db_setup.py --stats
 
 # Start the main application
-print_status "Starting GridTrader Pro MVP..."
+print_status "Starting GridTrader Pro Service..."
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🤖 GridTrader Pro MVP - Production Ready"
+echo "🤖 GridTrader Pro - Client Service"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "📱 Telegram Bot: Starting..."
 echo "🗄️  Database: Initialized"
-echo "📊 Analytics: Enabled"
-echo "🔒 Security: Encrypted storage"
-echo "📁 Logs: data/logs/gridtrader.log"
+echo "🔒 Security: Encrypted API storage"
+echo "📊 Grid Trading: Professional service"
+echo "📁 Logs: data/logs/"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
 # Start the application with error handling
-python telegram_bot.py
+python main.py
 
 # Capture exit code
 exit_code=$?
 
 if [ $exit_code -ne 0 ]; then
-    print_error "Application exited with code $exit_code"
-    print_status "Check logs: tail -f data/logs/gridtrader.log"
+    print_error "Service exited with code $exit_code"
+    print_status "Check logs: tail -f data/logs/gridtrader_service.log"
 else
-    print_status "Application stopped gracefully"
+    print_status "Service stopped gracefully"
 fi
 
 exit $exit_code

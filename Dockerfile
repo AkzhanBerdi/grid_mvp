@@ -5,8 +5,8 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \\
-    gcc \\
+RUN apt-get update && apt-get install -y \
+    gcc \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
@@ -28,30 +28,9 @@ ENV PYTHONUNBUFFERED=1
 # Expose health check port (optional)
 EXPOSE 8080
 
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import sqlite3; sqlite3.connect('data/gridtrader_clients.db').close()" || exit 1
+
 # Run the application
-CMD ["python", "telegram_bot.py"]
-
-# docker-compose.yml
-version: '3.8'
-
-services:
-  gridtrader-bot:
-    build: .
-    container_name: gridtrader-pro-mvp
-    restart: unless-stopped
-    environment:
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - BINANCE_API_KEY=${BINANCE_API_KEY}
-      - BINANCE_SECRET_KEY=${BINANCE_SECRET_KEY}
-      - ADMIN_TELEGRAM_ID=${ADMIN_TELEGRAM_ID}
-      - ENVIRONMENT=production
-      - LOG_LEVEL=INFO
-    volumes:
-      - ./data:/app/data
-      - ./logs:/app/data/logs
-    healthcheck:
-      test: ["CMD", "python", "health_check.py"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+CMD ["python", "main.py"]

@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""
-GridTrader Pro - Simplified Client Service
-Production-ready grid trading for paying clients
-"""
+"""Updated main.py - Complete Integration with User Trading System"""
 
 import asyncio
 import logging
@@ -17,14 +14,15 @@ from telegram.ext import (
     filters,
 )
 
+from analytics.conversion_tracker import ConversionTracker
 from config import Config
 from database.db_setup import DatabaseSetup
-from handlers.client_handler import ClientHandler
-from services.grid_orchestrator import GridOrchestrator
+from handlers.complete_handler import CompleteHandler
+from services.bot_orchestrator import BotOrchestrator
 
 
-class GridTradingService:
-    """Simplified Grid Trading Service for Paying Clients"""
+class GridTradingBot:
+    """Complete Grid Trading Bot with Per-User API Integration"""
 
     def __init__(self):
         self.config = Config()
@@ -32,14 +30,15 @@ class GridTradingService:
 
         # Initialize components
         self.db_setup = DatabaseSetup()
-        self.grid_orchestrator = GridOrchestrator()
-        self.handler = ClientHandler(self.grid_orchestrator)
+        self.conversion_tracker = ConversionTracker()
+        self.bot_orchestrator = BotOrchestrator()
+        self.handler = CompleteHandler(self.conversion_tracker)
 
-        # Service state
+        # Bot state
         self.running = False
         self.telegram_app = None
 
-        self.logger.info("🤖 GridTrader Pro Client Service initialized")
+        self.logger.info("🤖 GridTrader Pro initialized with per-user API support")
 
     def _setup_logging(self) -> logging.Logger:
         """Setup logging configuration"""
@@ -64,25 +63,38 @@ class GridTradingService:
             self.logger.error(f"❌ Database initialization failed: {e}")
             raise
 
-    async def grid_management_loop(self):
-        """Main loop to manage all client grid trading"""
-        self.logger.info("🔄 Starting grid management loop")
+    async def user_bot_management_loop(self):
+        """Main loop to manage user trading bots"""
+        self.logger.info("🔄 Starting user bot management loop")
 
         while self.running:
             try:
-                # Update all active grids
-                await self.grid_orchestrator.update_all_grids()
+                # Update all active user bots
+                await self.bot_orchestrator.update_all_bots()
 
-                # Log status every 5 minutes
-                active_grids = self.grid_orchestrator.get_all_active_grids()
-                if active_grids:
-                    self.logger.info(f"📊 Managing {len(active_grids)} active grids")
+                # Log status
+                active_bots = self.bot_orchestrator.get_all_active_bots()
+                if active_bots:
+                    self.logger.info(f"🤖 Managing {len(active_bots)} active user bots")
+
+                    # Log some statistics
+                    total_trades = sum(
+                        bot.get("total_trades", 0) for bot in active_bots.values()
+                    )
+                    total_profit = sum(
+                        bot.get("total_profit", 0) for bot in active_bots.values()
+                    )
+
+                    if total_trades > 0:
+                        self.logger.info(
+                            f"📊 Total trades: {total_trades}, Total profit: ${total_profit:.2f}"
+                        )
 
                 # Wait 30 seconds before next update
                 await asyncio.sleep(30)
 
             except Exception as e:
-                self.logger.error(f"Error in grid management loop: {e}")
+                self.logger.error(f"Error in bot management loop: {e}")
                 await asyncio.sleep(60)  # Wait longer on error
 
     async def telegram_start(self, update, context):
@@ -109,7 +121,9 @@ class GridTradingService:
     def setup_telegram_bot(self):
         """Setup Telegram bot application"""
         if not self.config.TELEGRAM_BOT_TOKEN:
-            self.logger.warning("Telegram bot token not configured - skipping Telegram bot")
+            self.logger.warning(
+                "Telegram bot token not configured - skipping Telegram bot"
+            )
             return None
 
         try:
@@ -132,12 +146,12 @@ class GridTradingService:
             self.logger.error(f"Failed to setup Telegram bot: {e}")
             return None
 
-    async def run_service(self):
-        """Run both grid management and Telegram bot concurrently"""
+    async def run_bot(self):
+        """Run both bot management and Telegram bot concurrently"""
         tasks = []
 
-        # Add grid management loop
-        management_task = asyncio.create_task(self.grid_management_loop())
+        # Add bot management loop
+        management_task = asyncio.create_task(self.user_bot_management_loop())
         tasks.append(management_task)
 
         # Add Telegram bot task if configured
@@ -153,32 +167,32 @@ class GridTradingService:
                 )
                 tasks.append(telegram_task)
 
-                self.logger.info("✅ Both grid management and Telegram bot started")
+                self.logger.info("✅ Both user bot management and Telegram bot started")
 
             except Exception as e:
                 self.logger.error(f"Failed to start Telegram bot: {e}")
-                self.logger.info("🤖 Continuing with grid management only")
+                self.logger.info("🤖 Continuing with bot management only")
         else:
-            self.logger.info("🤖 Starting grid management only (no Telegram bot)")
+            self.logger.info("🤖 Starting bot management only (no Telegram bot)")
 
         try:
             # Run all tasks concurrently
             await asyncio.gather(*tasks)
         except KeyboardInterrupt:
-            self.logger.info("🛑 Service stopped by user")
+            self.logger.info("🛑 Bot stopped by user")
         except Exception as e:
-            self.logger.error(f"❌ Service error: {e}")
+            self.logger.error(f"❌ Bot error: {e}")
         finally:
             # Cleanup
-            await self.stop_service()
+            await self.stop_bot()
 
-    async def stop_service(self):
-        """Stop the service gracefully"""
-        self.logger.info("🛑 Stopping GridTrader Pro Service...")
+    async def stop_bot(self):
+        """Stop the bot gracefully"""
+        self.logger.info("🛑 Stopping GridTrader Pro...")
         self.running = False
 
-        # Stop all grids first
-        await self.grid_orchestrator.shutdown_all_grids()
+        # Stop all user bots first
+        await self.bot_orchestrator.shutdown_all_bots()
 
         # Stop Telegram bot
         if self.telegram_app:
@@ -190,11 +204,11 @@ class GridTradingService:
             except Exception as e:
                 self.logger.error(f"Error stopping Telegram bot: {e}")
 
-        self.logger.info("✅ GridTrader Pro Service stopped")
+        self.logger.info("✅ GridTrader Pro stopped")
 
     async def start_async(self):
         """Async start method"""
-        self.logger.info("🚀 Starting GridTrader Pro Client Service")
+        self.logger.info("🚀 Starting GridTrader Pro with Per-User Trading")
 
         try:
             # Initialize database
@@ -205,7 +219,7 @@ class GridTradingService:
 
             # Start main loop
             self.running = True
-            await self.run_service()
+            await self.run_bot()
 
         except Exception as e:
             self.logger.error(f"❌ Startup error: {e}")
@@ -214,12 +228,12 @@ class GridTradingService:
     def start(self):
         """Main start method - runs async event loop"""
         try:
-            # Run the async service
+            # Run the async bot
             asyncio.run(self.start_async())
         except KeyboardInterrupt:
-            self.logger.info("🛑 Service stopped by user")
+            self.logger.info("🛑 Bot stopped by user")
         except Exception as e:
-            self.logger.error(f"❌ Service error: {e}")
+            self.logger.error(f"❌ Bot error: {e}")
         finally:
             self.running = False
 
@@ -231,18 +245,18 @@ def main():
         print("❌ Invalid configuration. Please check your environment variables.")
         sys.exit(1)
 
-    print("🚀 Starting GridTrader Pro Client Service")
+    print("🚀 Starting GridTrader Pro MVP")
     print("=" * 50)
-    print("✅ Real trading only - no trials or demos")
-    print("✅ Client API key management")
-    print("✅ Professional grid trading")
+    print("✅ Per-user API key support")
+    print("✅ Individual trading bot instances")
+    print("✅ Real & demo trading modes")
     print("✅ Telegram interface")
-    print("✅ Production ready")
+    print("✅ Ready for 50+ users")
     print("=" * 50)
 
-    # Create and start service
-    service = GridTradingService()
-    service.start()
+    # Create and start bot
+    bot = GridTradingBot()
+    bot.start()
 
 
 if __name__ == "__main__":

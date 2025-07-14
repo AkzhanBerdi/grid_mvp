@@ -1,0 +1,16 @@
+GridTrader Pro Deployment Info
+==============================
+Deployment Date: Mon Jul 14 12:33:47 PM +05 2025
+Main File: main.py
+Python Version: Python 3.10.12
+Git Commit: 112cb83b6af4aff94040e604be3b653e2ec92d38
+User: rb211
+System: Linux pop-os 6.12.10-76061203-generic #202412060638~1751390742~22.04~79b9668 SMP PREEMPT_DYNAMIC Tue J x86_64 x86_64 x86_64 GNU/Linux
+
+Features Deployed:
+- Dual Trial System (Demo → Real)
+- Auto Trial Expiry
+- Enhanced User Model
+- Improved Bot Orchestration
+
+Database Schema Version: Dual Trial v1.0

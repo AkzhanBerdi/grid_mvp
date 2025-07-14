@@ -1,16 +1,22 @@
 # health_check.py
-"""Health check endpoint for monitoring"""
+#!/usr/bin/env python3
+"""Health check script for GridTrader Pro Service"""
 
 import asyncio
 import logging
 import sqlite3
+import sys
 from datetime import datetime
+from pathlib import Path
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent))
 
 from config import Config
 
 
 class HealthCheck:
-    """System health monitoring"""
+    """System health monitoring for GridTrader Pro Service"""
 
     def __init__(self):
         self.logger = logging.getLogger(__name__)
@@ -20,6 +26,7 @@ class HealthCheck:
         health_status = {
             "timestamp": datetime.now().isoformat(),
             "status": "healthy",
+            "service": "GridTrader Pro Client Service",
             "checks": {},
         }
 
@@ -30,10 +37,10 @@ class HealthCheck:
             # Configuration validation
             health_status["checks"]["config"] = self._check_config()
 
-            # Active bot instances
-            health_status["checks"]["bots"] = await self._check_bot_instances()
+            # File system access
+            health_status["checks"]["filesystem"] = self._check_filesystem()
 
-            # Memory usage
+            # Memory usage (if psutil available)
             health_status["checks"]["memory"] = self._check_memory_usage()
 
             # Determine overall status
@@ -42,6 +49,7 @@ class HealthCheck:
                 for check in health_status["checks"].values()
                 if not check["healthy"]
             ]
+
             if failed_checks:
                 health_status["status"] = "unhealthy"
                 health_status["failed_checks"] = len(failed_checks)
@@ -57,14 +65,35 @@ class HealthCheck:
         """Check database connectivity and integrity"""
         try:
             with sqlite3.connect(Config.DATABASE_PATH) as conn:
-                cursor = conn.execute("SELECT COUNT(*) FROM users")
-                user_count = cursor.fetchone()[0]
+                # Check if tables exist
+                cursor = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+                tables = [row[0] for row in cursor.fetchall()]
+
+                required_tables = ["clients", "trades", "grid_orders", "grid_instances"]
+                missing_tables = [
+                    table for table in required_tables if table not in tables
+                ]
+
+                if missing_tables:
+                    return {
+                        "healthy": False,
+                        "error": f"Missing tables: {missing_tables}",
+                        "message": "Database structure incomplete",
+                    }
+
+                # Count clients
+                cursor = conn.execute("SELECT COUNT(*) FROM clients")
+                client_count = cursor.fetchone()[0]
 
                 return {
                     "healthy": True,
-                    "user_count": user_count,
-                    "message": "Database accessible",
+                    "client_count": client_count,
+                    "tables": len(tables),
+                    "message": "Database accessible and complete",
                 }
+
         except Exception as e:
             return {
                 "healthy": False,
@@ -76,13 +105,22 @@ class HealthCheck:
         """Validate configuration"""
         try:
             is_valid = Config.validate()
+
+            issues = []
+            if not Config.TELEGRAM_BOT_TOKEN:
+                issues.append("Missing TELEGRAM_BOT_TOKEN")
+            if len(Config.ENCRYPTION_KEY) < 16:
+                issues.append("ENCRYPTION_KEY too short")
+
             return {
-                "healthy": is_valid,
+                "healthy": is_valid and not issues,
                 "environment": Config.ENVIRONMENT,
+                "issues": issues if issues else None,
                 "message": "Configuration valid"
-                if is_valid
-                else "Missing required config",
+                if is_valid and not issues
+                else "Configuration issues found",
             }
+
         except Exception as e:
             return {
                 "healthy": False,
@@ -90,34 +128,39 @@ class HealthCheck:
                 "message": "Configuration check failed",
             }
 
-    async def _check_bot_instances(self) -> dict:
-        """Check active bot instances"""
+    def _check_filesystem(self) -> dict:
+        """Check file system access"""
         try:
-            with sqlite3.connect(Config.DATABASE_PATH) as conn:
-                cursor = conn.execute("""
-                    SELECT status, COUNT(*) 
-                    FROM bot_instances 
-                    GROUP BY status
-                """)
+            # Check if data directories exist and are writable
+            data_dir = Path("data")
+            logs_dir = Path("data/logs")
+            backups_dir = Path("data/backups")
 
-                status_counts = dict(cursor.fetchall())
-                active_bots = status_counts.get("active", 0)
+            # Create directories if they don't exist
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            backups_dir.mkdir(parents=True, exist_ok=True)
 
-                return {
-                    "healthy": True,
-                    "active_bots": active_bots,
-                    "status_breakdown": status_counts,
-                    "message": f"{active_bots} bots active",
-                }
+            # Test write access
+            test_file = logs_dir / "health_check_test.txt"
+            test_file.write_text("test")
+            test_file.unlink()
+
+            return {
+                "healthy": True,
+                "data_dir_exists": data_dir.exists(),
+                "logs_dir_writable": True,
+                "message": "File system access OK",
+            }
+
         except Exception as e:
             return {
                 "healthy": False,
                 "error": str(e),
-                "message": "Bot instance check failed",
+                "message": "File system access failed",
             }
 
     def _check_memory_usage(self) -> dict:
-        """Check memory usage"""
+        """Check memory usage if psutil is available"""
         try:
             import psutil
 
@@ -125,15 +168,17 @@ class HealthCheck:
             memory_usage_mb = (memory.total - memory.available) / (1024 * 1024)
             memory_percent = memory.percent
 
-            # Alert if memory usage > 80%
-            is_healthy = memory_percent < 80
+            # Alert if memory usage > 90%
+            is_healthy = memory_percent < 90
 
             return {
                 "healthy": is_healthy,
                 "usage_mb": round(memory_usage_mb, 2),
                 "usage_percent": memory_percent,
-                "message": f"Memory usage: {memory_percent}%",
+                "available_mb": round(memory.available / (1024 * 1024), 2),
+                "message": f"Memory usage: {memory_percent:.1f}%",
             }
+
         except ImportError:
             return {
                 "healthy": True,
@@ -143,14 +188,34 @@ class HealthCheck:
             return {"healthy": False, "error": str(e), "message": "Memory check failed"}
 
 
+async def main():
+    """Main health check function"""
+    health_check = HealthCheck()
+    status = await health_check.check_system_health()
+
+    print("🏥 GridTrader Pro Health Check")
+    print(f"⏰ {status['timestamp']}")
+    print(f"📊 Overall Status: {status['status'].upper()}")
+    print("=" * 50)
+
+    for check_name, check_result in status["checks"].items():
+        status_icon = "✅" if check_result["healthy"] else "❌"
+        print(f"{status_icon} {check_name.title()}: {check_result['message']}")
+
+        if not check_result["healthy"] and "error" in check_result:
+            print(f"   Error: {check_result['error']}")
+
+    print("=" * 50)
+
+    # Return appropriate exit code
+    if status["status"] == "healthy":
+        print("✅ All systems operational")
+        return 0
+    else:
+        print("❌ System issues detected")
+        return 1
+
+
 if __name__ == "__main__":
-
-    async def main():
-        health_check = HealthCheck()
-        status = await health_check.check_system_health()
-        print(f"System Status: {status['status']}")
-        for check_name, check_result in status["checks"].items():
-            status_icon = "✅" if check_result["healthy"] else "❌"
-            print(f"{status_icon} {check_name}: {check_result['message']}")
-
-    asyncio.run(main())
+    exit_code = asyncio.run(main())
+    sys.exit(exit_code)
