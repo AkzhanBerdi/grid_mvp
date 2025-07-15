@@ -60,11 +60,20 @@ class EnhancedGridOrchestrator:
             if not api_key or not secret_key:
                 return {"success": False, "error": "Failed to decrypt API keys"}
 
-            # Create and test Binance client
+            # Create Binance client normally (SIMPLE FIX)
             binance_client = Client(api_key, secret_key, testnet=False)
 
+            # Just set a custom recv_window for get_account specifically
+            try:
+                account = binance_client.get_account(recvWindow=60000)
+            except Exception:
+                # Fallback to default if recvWindow not supported
+                account = binance_client.get_account()
             # Test connection
-            account = binance_client.get_account()
+            try:
+                account = binance_client.get_account(recvWindow=60000)
+            except TypeError:
+                account = binance_client.get_account()
 
             # Store client for later use
             self.binance_clients[client_id] = binance_client

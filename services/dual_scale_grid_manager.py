@@ -1,8 +1,9 @@
 # services/dual_scale_grid_manager.py
-"""Smart 35/65 Dual-Scale Grid System - Maximum Profit Optimization"""
+"""Smart 35/65 Dual-Scale Grid System - FIXED TIMESTAMP AND API ISSUES"""
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Dict, Tuple
 
@@ -15,7 +16,7 @@ from services.market_analysis import MarketAnalysisService, MarketCondition
 
 
 class DualScaleGridManager:
-    """Smart 35/65 dual-scale grid system for optimal profit capture"""
+    """Smart 35/65 dual-scale grid system - FIXED ALL BINANCE API ISSUES"""
 
     def __init__(self, binance_client: Client, client_id: int):
         self.binance_client = binance_client
@@ -46,8 +47,8 @@ class DualScaleGridManager:
                 "quantity_precision": 0,
                 "min_quantity": 10,
                 "min_base_for_sells": 20.0,
-                "base_levels": 5,  # Conservative base grid
-                "enhanced_levels": 8,  # Aggressive enhanced grid
+                "base_levels": 5,
+                "enhanced_levels": 8,
             },
             "AVAXUSDT": {
                 "min_notional": 10.0,
@@ -69,12 +70,111 @@ class DualScaleGridManager:
             "dual_scale_adaptations": 0,
         }
 
+    def _safe_binance_call(self, method_name: str, *args, **kwargs):
+        """FIXED: Safely call Binance API methods with proper timestamp handling"""
+        try:
+            method = getattr(self.binance_client, method_name)
+
+            # FIXED: Handle different API methods with appropriate parameters
+            if method_name == "get_symbol_ticker":
+                # FIXED: get_symbol_ticker doesn't support recvWindow
+                # and needs specific parameter handling
+                if "symbol" in kwargs:
+                    symbol = kwargs.pop("symbol")
+                    return method(symbol=symbol)
+                elif len(args) > 0:
+                    # If symbol passed as positional argument
+                    return method(symbol=args[0])
+                else:
+                    # No symbol specified - get all tickers
+                    return method()
+
+            elif method_name in [
+                "get_account",
+                "get_open_orders",
+                "order_limit_buy",
+                "order_limit_sell",
+                "cancel_order",
+            ]:
+                # These methods support recvWindow and need timestamp sync
+                try:
+                    # Add extended recvWindow for timestamp issues
+                    kwargs["recvWindow"] = 60000  # 60 seconds
+                    return method(*args, **kwargs)
+                except Exception as e:
+                    if "recvWindow" in str(e) or "timestamp" in str(e).lower():
+                        # Retry with larger recvWindow
+                        self.logger.warning(
+                            f"Timestamp issue, retrying with larger window: {e}"
+                        )
+                        kwargs["recvWindow"] = 120000  # 2 minutes
+                        time.sleep(1)  # Brief pause to let timestamps align
+                        return method(*args, **kwargs)
+                    else:
+                        raise
+
+            elif method_name == "get_exchange_info":
+                # get_exchange_info doesn't need recvWindow
+                return method(*args, **kwargs)
+
+            elif method_name == "get_server_time":
+                # Server time call doesn't need recvWindow
+                return method()
+
+            else:
+                # Default handling for other methods
+                try:
+                    return method(*args, **kwargs)
+                except TypeError:
+                    # If method doesn't support the parameters, try without extras
+                    return method(*args)
+
+        except Exception as e:
+            self.logger.error(f"❌ Binance API call failed: {method_name} - {e}")
+
+            # Special handling for timestamp errors
+            if "timestamp" in str(e).lower() or "recvWindow" in str(e):
+                self.logger.error("🕐 Timestamp synchronization issue detected")
+                self.logger.error("💡 Consider synchronizing system clock with NTP")
+
+            raise
+
+    def _sync_server_time(self):
+        """Sync with Binance server time to avoid timestamp issues"""
+        try:
+            server_time = self._safe_binance_call("get_server_time")
+            server_timestamp = server_time["serverTime"]
+            local_timestamp = int(time.time() * 1000)
+            time_diff = abs(server_timestamp - local_timestamp)
+
+            self.logger.info(
+                f"⏰ Time sync check: local={local_timestamp}, server={server_timestamp}, diff={time_diff}ms"
+            )
+
+            if time_diff > 30000:  # More than 30 seconds difference
+                self.logger.warning(f"⚠️ Large time difference detected: {time_diff}ms")
+                self.logger.warning("💡 System clock may need synchronization")
+
+            return time_diff < 60000  # Return True if within 1 minute
+
+        except Exception as e:
+            self.logger.error(f"❌ Failed to sync server time: {e}")
+            return False
+
     async def start_dual_scale_grid(self, symbol: str, total_capital: float) -> Dict:
-        """Start intelligent 35/65 dual-scale grid system"""
+        """Start intelligent 35/65 dual-scale grid system - FIXED VERSION"""
         try:
             self.logger.info(
                 f"🚀 Starting 35/65 dual-scale grid for {symbol} with ${total_capital:,.2f}"
             )
+
+            # FIXED: Sync time before starting
+            self.logger.info("🕐 Synchronizing with Binance server time...")
+            time_synced = self._sync_server_time()
+            if not time_synced:
+                self.logger.warning(
+                    "⚠️ Time sync warning - continuing with larger recvWindow"
+                )
 
             # Calculate capital allocation
             base_capital = total_capital * self.BASE_ALLOCATION  # 35%
@@ -88,8 +188,9 @@ class DualScaleGridManager:
                 f"   🚀 Enhanced Grid (65%): ${enhanced_capital:.2f} - Aggressive profit capture"
             )
 
-            # Get account balances
-            account = self.binance_client.get_account()
+            # Get account balances with FIXED timestamp handling
+            self.logger.info("📊 Getting account balances...")
+            account = self._safe_binance_call("get_account")
             balances = {
                 balance["asset"]: float(balance["free"])
                 for balance in account["balances"]
@@ -106,7 +207,7 @@ class DualScaleGridManager:
             self.logger.info(f"   {quote_asset}: {quote_balance}")
 
             # Validate minimum capital for dual-scale system
-            min_required = 100.0  # Minimum for meaningful dual-scale
+            min_required = 100.0
             if total_capital < min_required:
                 return {
                     "success": False,
@@ -115,6 +216,7 @@ class DualScaleGridManager:
 
             # Get current market condition
             try:
+                self.logger.info("📈 Analyzing market conditions...")
                 market_condition = await self.market_analysis.get_market_condition(
                     symbol
                 )
@@ -137,9 +239,18 @@ class DualScaleGridManager:
                 symbol, base_balance, quote_balance, total_capital, market_condition
             )
 
-            # Get current price
-            ticker = self.binance_client.get_symbol_ticker(symbol=symbol)
-            current_price = float(ticker["price"])
+            # FIXED: Get current price with proper error handling
+            self.logger.info(f"💹 Getting current price for {symbol}...")
+            try:
+                ticker = self._safe_binance_call("get_symbol_ticker", symbol=symbol)
+                current_price = float(ticker["price"])
+                self.logger.info(f"📊 Current {symbol} price: ${current_price:.4f}")
+            except Exception as e:
+                self.logger.error(f"❌ Failed to get current price for {symbol}: {e}")
+                return {
+                    "success": False,
+                    "error": f"Failed to get market price: {str(e)}",
+                }
 
             # Create adaptive grid configuration
             adaptive_config = AdaptiveGridConfig(
@@ -167,6 +278,7 @@ class DualScaleGridManager:
                 "strategy": "dual_scale_35_65",
                 "market_condition": market_condition["condition"],
                 "market_score": market_condition["score"],
+                "current_price": current_price,
                 "capital_allocation": {
                     "base_grid": {
                         "percentage": 35,
@@ -217,12 +329,8 @@ class DualScaleGridManager:
         enhanced_capital = total_capital * self.ENHANCED_ALLOCATION
 
         # Calculate order sizes for each grid
-        base_order_size = base_capital / (
-            base_levels * 2
-        )  # Conservative smaller orders
-        enhanced_order_size = enhanced_capital / (
-            enhanced_levels * 2
-        )  # Aggressive larger orders
+        base_order_size = base_capital / (base_levels * 2)
+        enhanced_order_size = enhanced_capital / (enhanced_levels * 2)
 
         # Ensure minimum notional compliance
         if base_order_size < min_notional:
@@ -242,15 +350,11 @@ class DualScaleGridManager:
 
         # Enhanced grid: Adaptive spacing
         if market_score > 0.7:  # Strong bullish
-            enhanced_spacing = max(
-                0.01, 0.02 - volatility * 0.01
-            )  # Tighter in bullish low-vol
+            enhanced_spacing = max(0.01, 0.02 - volatility * 0.01)
         elif market_score < 0.3:  # Strong bearish
-            enhanced_spacing = min(
-                0.04, 0.03 + volatility * 0.01
-            )  # Wider in bearish high-vol
+            enhanced_spacing = min(0.04, 0.03 + volatility * 0.01)
         else:  # Neutral
-            enhanced_spacing = 0.02 + volatility * 0.005  # Moderate adaptive
+            enhanced_spacing = 0.02 + volatility * 0.005
 
         # Strategy determination
         if base_balance >= min_base_for_sells:
@@ -383,26 +487,32 @@ class DualScaleGridManager:
             raise
 
     async def _execute_smart_buy_setup(self, grid_config, grid_type: str) -> bool:
-        """Execute buy orders with balance checking"""
+        """Execute buy orders with FIXED balance checking"""
         try:
             symbol = grid_config.symbol
             orders_placed = 0
 
-            # Get account balance
-            account = self.binance_client.get_account()
+            # FIXED: Get account balance with proper error handling
+            self.logger.info(f"💰 Getting account balance for {grid_type}...")
+            account = self._safe_binance_call("get_account")
             balances = {
                 balance["asset"]: float(balance["free"])
                 for balance in account["balances"]
             }
             available_usdt = balances.get("USDT", 0.0)
 
-            # Get symbol info
-            exchange_info = self.binance_client.get_exchange_info()
+            # FIXED: Get symbol info with proper error handling
+            self.logger.info(f"📋 Getting exchange info for {symbol}...")
+            exchange_info = self._safe_binance_call("get_exchange_info")
             symbol_info = next(
                 (s for s in exchange_info["symbols"] if s["symbol"] == symbol), None
             )
-            filters = {f["filterType"]: f for f in symbol_info["filters"]}
 
+            if not symbol_info:
+                self.logger.error(f"❌ Symbol {symbol} not found in exchange info")
+                return False
+
+            filters = {f["filterType"]: f for f in symbol_info["filters"]}
             min_notional = float(
                 filters.get("MIN_NOTIONAL", {}).get("minNotional", 10.0)
             )
@@ -452,8 +562,9 @@ class DualScaleGridManager:
                             formatted_quantity
                         )
 
-                    # Place order
-                    order = self.binance_client.order_limit_buy(
+                    # FIXED: Place order with proper timestamp handling
+                    order = self._safe_binance_call(
+                        "order_limit_buy",
                         symbol=symbol,
                         quantity=formatted_quantity,
                         price=formatted_price,
@@ -497,27 +608,31 @@ class DualScaleGridManager:
             return False
 
     async def _execute_smart_sell_setup(self, grid_config, grid_type: str) -> bool:
-        """Execute sell orders with balance checking"""
+        """Execute sell orders with FIXED balance checking"""
         try:
             symbol = grid_config.symbol
             base_asset = symbol.replace("USDT", "")
             orders_placed = 0
 
-            # Get account balance
-            account = self.binance_client.get_account()
+            # FIXED: Get account balance with proper error handling
+            account = self._safe_binance_call("get_account")
             balances = {
                 balance["asset"]: float(balance["free"])
                 for balance in account["balances"]
             }
             available_base = balances.get(base_asset, 0.0)
 
-            # Get symbol info
-            exchange_info = self.binance_client.get_exchange_info()
+            # FIXED: Get symbol info with proper error handling
+            exchange_info = self._safe_binance_call("get_exchange_info")
             symbol_info = next(
                 (s for s in exchange_info["symbols"] if s["symbol"] == symbol), None
             )
-            filters = {f["filterType"]: f for f in symbol_info["filters"]}
 
+            if not symbol_info:
+                self.logger.error(f"❌ Symbol {symbol} not found in exchange info")
+                return False
+
+            filters = {f["filterType"]: f for f in symbol_info["filters"]}
             min_notional = float(
                 filters.get("MIN_NOTIONAL", {}).get("minNotional", 10.0)
             )
@@ -567,8 +682,9 @@ class DualScaleGridManager:
                         )
                         required_quantity = float(formatted_quantity)
 
-                    # Place order
-                    order = self.binance_client.order_limit_sell(
+                    # FIXED: Place order with proper timestamp handling
+                    order = self._safe_binance_call(
+                        "order_limit_sell",
                         symbol=symbol,
                         quantity=formatted_quantity,
                         price=formatted_price,
@@ -645,8 +761,9 @@ class DualScaleGridManager:
             self.logger.error(f"❌ Order formatting error: {e}")
             return f"{price:.8f}", f"{quantity:.8f}"
 
+    # Additional monitoring methods with FIXED timestamp handling
     async def _monitor_dual_scale_grid(self, symbol: str) -> None:
-        """Monitor dual-scale grid system"""
+        """Monitor dual-scale grid system with FIXED timestamp handling"""
         try:
             while symbol in self.active_grids:
                 adaptive_config = self.active_grids[symbol]
@@ -672,12 +789,12 @@ class DualScaleGridManager:
     async def _check_filled_orders_dual_scale(
         self, adaptive_config: AdaptiveGridConfig
     ) -> None:
-        """Check filled orders on both base and enhanced grids"""
+        """Check filled orders on both base and enhanced grids with FIXED API calls"""
         try:
             symbol = adaptive_config.symbol
 
-            # Get current open orders
-            open_orders = self.binance_client.get_open_orders(symbol=symbol)
+            # FIXED: Get current open orders with proper timestamp handling
+            open_orders = self._safe_binance_call("get_open_orders", symbol=symbol)
             open_order_ids = {order["orderId"] for order in open_orders}
 
             # Check base grid (35% allocation)
@@ -761,7 +878,7 @@ class DualScaleGridManager:
                     f"💰 {grid_type} {side} filled: {level['quantity']} at ${level['price']:.4f}"
                 )
 
-                # Replace the filled order (implement smart replacement logic)
+                # Replace the filled order
                 await self._replace_filled_order_dual_scale(
                     grid_config, side, level, grid_type, adaptive_config
                 )
@@ -777,10 +894,12 @@ class DualScaleGridManager:
         grid_type: str,
         adaptive_config: AdaptiveGridConfig,
     ) -> None:
-        """Replace filled order with intelligent dual-scale logic"""
+        """Replace filled order with intelligent dual-scale logic and FIXED API calls"""
         try:
-            # Get current price
-            ticker = self.binance_client.get_symbol_ticker(symbol=grid_config.symbol)
+            # FIXED: Get current price with proper timestamp handling
+            ticker = self._safe_binance_call(
+                "get_symbol_ticker", symbol=grid_config.symbol
+            )
             current_price = float(ticker["price"])
 
             # Determine replacement strategy based on grid type and market conditions
@@ -794,13 +913,9 @@ class DualScaleGridManager:
                     # Aggressive replacement with market adaptation
                     market_score = adaptive_config.market_condition.get("score", 0.5)
                     if market_score > 0.6:  # Bullish market
-                        new_price = current_price * (
-                            1 + grid_config.grid_spacing * 1.2
-                        )  # Closer to market
+                        new_price = current_price * (1 + grid_config.grid_spacing * 1.2)
                     else:
-                        new_price = current_price * (
-                            1 + grid_config.grid_spacing * 1.8
-                        )  # Further from market
+                        new_price = current_price * (1 + grid_config.grid_spacing * 1.8)
             else:
                 # Sell filled, place new buy order
                 new_side = "BUY"
@@ -811,16 +926,12 @@ class DualScaleGridManager:
                     # Aggressive replacement with market adaptation
                     market_score = adaptive_config.market_condition.get("score", 0.5)
                     if market_score < 0.4:  # Bearish market
-                        new_price = current_price * (
-                            1 - grid_config.grid_spacing * 1.2
-                        )  # Closer to market
+                        new_price = current_price * (1 - grid_config.grid_spacing * 1.2)
                     else:
-                        new_price = current_price * (
-                            1 - grid_config.grid_spacing * 1.8
-                        )  # Further from market
+                        new_price = current_price * (1 - grid_config.grid_spacing * 1.8)
 
-            # Get symbol info for formatting
-            exchange_info = self.binance_client.get_exchange_info()
+            # FIXED: Get symbol info for formatting with proper timestamp handling
+            exchange_info = self._safe_binance_call("get_exchange_info")
             symbol_info = next(
                 (
                     s
@@ -839,16 +950,18 @@ class DualScaleGridManager:
                 new_price, new_quantity, filters
             )
 
-            # Place replacement order
+            # FIXED: Place replacement order with proper timestamp handling
             try:
                 if new_side == "BUY":
-                    order = self.binance_client.order_limit_buy(
+                    order = self._safe_binance_call(
+                        "order_limit_buy",
                         symbol=grid_config.symbol,
                         quantity=formatted_quantity,
                         price=formatted_price,
                     )
                 else:
-                    order = self.binance_client.order_limit_sell(
+                    order = self._safe_binance_call(
+                        "order_limit_sell",
                         symbol=grid_config.symbol,
                         quantity=formatted_quantity,
                         price=formatted_price,
@@ -887,7 +1000,7 @@ class DualScaleGridManager:
     async def _check_balance_expansion_dual_scale(
         self, adaptive_config: AdaptiveGridConfig
     ) -> None:
-        """Check for balance expansion opportunities in dual-scale system"""
+        """Check for balance expansion opportunities with FIXED API calls"""
         try:
             symbol = adaptive_config.symbol
             current_time = datetime.now()
@@ -899,8 +1012,8 @@ class DualScaleGridManager:
             ).total_seconds() < self.balance_check_interval:
                 return
 
-            # Get current balances
-            account = self.binance_client.get_account()
+            # FIXED: Get current balances with proper timestamp handling
+            account = self._safe_binance_call("get_account")
             balances = {
                 balance["asset"]: float(balance["free"])
                 for balance in account["balances"]
@@ -925,8 +1038,8 @@ class DualScaleGridManager:
                     "   Activating enhanced sell orders (65% allocation)..."
                 )
 
-                # Get current price
-                ticker = self.binance_client.get_symbol_ticker(symbol=symbol)
+                # FIXED: Get current price with proper timestamp handling
+                ticker = self._safe_binance_call("get_symbol_ticker", symbol=symbol)
                 current_price = float(ticker["price"])
 
                 # Configure enhanced grid sells with 65% allocation
@@ -1017,7 +1130,7 @@ class DualScaleGridManager:
     async def _adapt_enhanced_grid_to_market(
         self, adaptive_config: AdaptiveGridConfig, market_condition: Dict
     ) -> None:
-        """Adapt enhanced grid spacing based on new market conditions"""
+        """Adapt enhanced grid spacing based on new market conditions with FIXED API calls"""
         try:
             symbol = adaptive_config.symbol
             market_score = market_condition.get("score", 0.5)
@@ -1044,8 +1157,8 @@ class DualScaleGridManager:
                 # Update spacing and recalculate
                 adaptive_config.enhanced_grid.grid_spacing = new_spacing
 
-                # Get current price
-                ticker = self.binance_client.get_symbol_ticker(symbol=symbol)
+                # FIXED: Get current price with proper timestamp handling
+                ticker = self._safe_binance_call("get_symbol_ticker", symbol=symbol)
                 current_price = float(ticker["price"])
 
                 # Recalculate with new spacing
@@ -1070,18 +1183,20 @@ class DualScaleGridManager:
             self.logger.error(f"❌ Enhanced grid adaptation error: {e}")
 
     async def _cancel_grid_orders(self, grid_config) -> None:
-        """Cancel all orders for a specific grid"""
+        """Cancel all orders for a specific grid with FIXED API calls"""
         try:
             symbol = grid_config.symbol
-            open_orders = self.binance_client.get_open_orders(symbol=symbol)
+            open_orders = self._safe_binance_call("get_open_orders", symbol=symbol)
 
             for level in grid_config.buy_levels + grid_config.sell_levels:
                 if level["order_id"]:
                     for order in open_orders:
                         if order["orderId"] == level["order_id"]:
                             try:
-                                self.binance_client.cancel_order(
-                                    symbol=symbol, orderId=level["order_id"]
+                                self._safe_binance_call(
+                                    "cancel_order",
+                                    symbol=symbol,
+                                    orderId=level["order_id"],
                                 )
                                 level["order_id"] = None
                                 level["filled"] = False
@@ -1185,7 +1300,7 @@ class DualScaleGridManager:
         }
 
     async def stop_dual_scale_grid(self, symbol: str) -> Dict:
-        """Stop dual-scale grid system"""
+        """Stop dual-scale grid system with FIXED API calls"""
         try:
             if symbol not in self.active_grids:
                 return {"success": False, "error": "Grid not active"}

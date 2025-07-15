@@ -232,3 +232,34 @@ logs/
 *.db
 *.sqlite*
 data/gridtrader_clients.db
+# Python Cache Files (Enhanced)
+# =============================
+__pycache__/
+*.py[cod]
+*$py.class
+*.cpython-*
+*.pyc
+*/__pycache__/
+**/__pycache__/
+.pytest_cache/
+.cache/
+*.cover
+.coverage
+
+# Compiled Python modules
+*.so
+*.pyd
+*.dll
+
+# Python virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# Python package builds
+build/
+dist/
+*.egg-info/
+*.egg
