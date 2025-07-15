@@ -19,8 +19,13 @@ from telegram.ext import (
 
 from config import Config
 from database.db_setup import DatabaseSetup
-from handlers.client_handler import ClientHandler
-from services.grid_orchestrator import GridOrchestrator
+
+# In main.py, replace ClientHandler with SmartClientHandler
+from handlers.smart_client_handler import SmartClientHandler
+
+# from handlers.client_handler import ClientHandler
+# from services.grid_orchestrator import GridOrchestrator
+from services.enhanced_grid_orchestrator import EnhancedGridOrchestrator
 
 
 class GridTradingService:
@@ -32,8 +37,8 @@ class GridTradingService:
 
         # Initialize components
         self.db_setup = DatabaseSetup()
-        self.grid_orchestrator = GridOrchestrator()
-        self.handler = ClientHandler(self.grid_orchestrator)
+        self.grid_orchestrator = EnhancedGridOrchestrator()
+        self.handler = SmartClientHandler()
 
         # Service state
         self.running = False
@@ -109,7 +114,9 @@ class GridTradingService:
     def setup_telegram_bot(self):
         """Setup Telegram bot application"""
         if not self.config.TELEGRAM_BOT_TOKEN:
-            self.logger.warning("Telegram bot token not configured - skipping Telegram bot")
+            self.logger.warning(
+                "Telegram bot token not configured - skipping Telegram bot"
+            )
             return None
 
         try:

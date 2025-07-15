@@ -169,6 +169,20 @@ class DatabaseSetup:
             )
         """)
 
+        conn.execute("""
+             CREATE TABLE IF NOT EXISTS adaptive_grids (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                market_condition TEXT,
+                base_grid_active BOOLEAN,
+                enhanced_grid_active BOOLEAN,
+                performance_metrics TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (client_id) REFERENCES clients (telegram_id)
+            )
+        """)
+
     def _create_indexes(self, conn):
         """Create database indexes for performance"""
         indexes = [

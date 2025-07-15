@@ -22,3 +22,7 @@ structlog>=23.0.0
 
 # Optional: For enhanced monitoring
 psutil>=5.9.0
+
+# Add to requirements.txt
+aiohttp>=3.8.0
+numpy>=1.24.0
