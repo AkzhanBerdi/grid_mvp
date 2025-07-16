@@ -25,6 +25,7 @@ from database.db_setup import DatabaseSetup
 from handlers.client_handler import ClientHandler
 from services.fifo_service import FIFOService
 from services.grid_orchestrator import GridOrchestrator
+from utils.fifo_telegram_monitor import FIFOMonitoringService
 from utils.network_recovery import EnhancedNetworkRecovery
 from utils.network_utils import NetworkUtils
 
@@ -46,6 +47,7 @@ class GridTradingService:
 
         # FIFO Profit Monitoring (Phase 3)
         self.fifo_service = FIFOService()
+        self.fifo_monitoring_service = FIFOMonitoringService()
 
         self.last_health_check = datetime.now()
         self.health_check_interval = timedelta(minutes=5)
@@ -383,7 +385,7 @@ class GridTradingService:
         self.logger.info("✅ GridTrader Pro Service stopped")
 
     async def start_async(self):
-        """Enhanced async start method with network recovery"""
+        """Enhanced async start method with network recovery and notifications"""
         self.logger.info(
             "🚀 Starting GridTrader Pro Client Service with Enhanced Network Recovery"
         )
@@ -397,6 +399,9 @@ class GridTradingService:
 
             self.setup_telegram_bot()
 
+            # ADD THIS: Send startup notification
+            await self.send_service_startup_notification()
+
             self.running = True
             await self.run_service()
 
@@ -407,7 +412,7 @@ class GridTradingService:
             raise
 
     async def _init_fifo_monitoring(self):
-        """Initialize FIFO monitoring for existing clients"""
+        """Initialize FIFO monitoring for existing clients - ENHANCED"""
         try:
             # Get all active clients
             with sqlite3.connect(self.config.DATABASE_PATH) as conn:
@@ -416,12 +421,18 @@ class GridTradingService:
                 )
                 active_clients = [row[0] for row in cursor.fetchall()]
 
-            # Initialize FIFO monitoring using the new FIFOService
+            # Initialize FIFO monitoring using the existing FIFOService
             for client_id in active_clients:
                 self.fifo_service.calculate_fifo_performance(client_id)
 
+                # ADD THIS: Initialize Telegram monitoring for each client
+                await self.fifo_monitoring_service.add_client_monitor(client_id)
+
             self.logger.info(
                 f"✅ FIFO monitoring initialized for {len(active_clients)} clients"
+            )
+            self.logger.info(
+                f"✅ Telegram FIFO notifications enabled for {len(active_clients)} clients"
             )
 
         except Exception as e:
@@ -451,6 +462,13 @@ class GridTradingService:
                 else 0
             )
 
+            # ADD THIS: Get FIFO monitoring status
+            fifo_monitors = (
+                len(self.fifo_monitoring_service.monitors)
+                if hasattr(self.fifo_monitoring_service, "monitors")
+                else 0
+            )
+
             return {
                 "running": self.running,
                 "network_health": health_status,
@@ -464,9 +482,121 @@ class GridTradingService:
                 ),
                 "network_status": health_status.get("status", "unknown"),
                 "consecutive_failures": health_status.get("consecutive_failures", 0),
+                # ADD THESE:
+                "fifo_monitors_active": fifo_monitors,
+                "telegram_notifications": "enabled"
+                if hasattr(self, "fifo_monitoring_service")
+                else "disabled",
             }
         except Exception as e:
             return {"error": str(e)}
+
+    async def send_service_startup_notification(self):
+        """Send service startup notification"""
+        try:
+            from services.telegram_notifier import TelegramNotifier
+
+            notifier = TelegramNotifier()
+
+            if not notifier.enabled:
+                return
+
+            # Get active clients count
+            with sqlite3.connect(self.config.DATABASE_PATH) as conn:
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM clients WHERE status = 'active'"
+                )
+                active_clients = cursor.fetchone()[0]
+
+            # Get network health
+            health_status = self.network_recovery.get_health_status()
+
+            startup_message = f"""🚀 **GridTrader Pro Service STARTED**
+
+    **⚡ System Status:** OPERATIONAL
+    **🔗 Network Health:** {health_status.get("status", "UNKNOWN")}
+    **👥 Active Clients:** {active_clients}
+    **📱 Telegram Bot:** {"✅ ENABLED" if self.telegram_app else "❌ DISABLED"}
+    **📊 FIFO Monitoring:** ✅ ACTIVE
+    **🛡️ Network Recovery:** ✅ ENHANCED
+
+    **🕐 Started:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}
+
+    🤖 **Ready to manage client grids and capture profits!**"""
+
+            await notifier.send_message(startup_message)
+            self.logger.info("✅ Service startup notification sent")
+
+        except Exception as e:
+            self.logger.error(f"Failed to send startup notification: {e}")
+
+    async def on_grid_started(self, client_id: int, symbol: str, capital: float):
+        """Called when a new grid is started - integrate with FIFO monitoring"""
+        try:
+            # Ensure FIFO monitoring is set up for this client
+            await self.fifo_monitoring_service.add_client_monitor(client_id)
+
+            # Send grid start notification through the monitoring service
+            from services.telegram_notifier import TelegramNotifier
+
+            notifier = TelegramNotifier()
+
+            if notifier.enabled:
+                message = f"""🚀 **New Grid Started**
+
+    **👤 Client:** {client_id}
+    **📊 Symbol:** {symbol}
+    **💰 Capital:** ${capital:,.2f}
+
+    **🎯 System:** 35/65 Dual-Scale Grid
+    **📈 Status:** ACTIVE & MONITORING
+
+    ⏰ {datetime.now().strftime("%H:%M:%S")}"""
+
+                await notifier.send_message(message)
+
+        except Exception as e:
+            self.logger.error(f"Failed to handle grid start notification: {e}")
+
+
+def get_service_status(self):
+    """Get comprehensive service status including enhanced network health"""
+    try:
+        # Enhanced network health
+        health_status = self.network_recovery.get_health_status()
+
+        active_grids = (
+            len(self.grid_orchestrator.get_all_active_grids())
+            if hasattr(self.grid_orchestrator, "get_all_active_grids")
+            else 0
+        )
+
+        # ADD THIS: Get FIFO monitoring status
+        fifo_monitors = (
+            len(self.fifo_monitoring_service.monitors)
+            if hasattr(self.fifo_monitoring_service, "monitors")
+            else 0
+        )
+
+        return {
+            "running": self.running,
+            "network_health": health_status,
+            "active_grids": active_grids,
+            "telegram_bot": self.telegram_app is not None,
+            "last_health_check": self.last_health_check.isoformat(),
+            "emergency_stop_needed": self.network_recovery.is_emergency_stop_needed(),
+            "total_network_requests": health_status.get("total_requests", 0),
+            "network_uptime_percentage": health_status.get("uptime_percentage", 100.0),
+            "network_status": health_status.get("status", "unknown"),
+            "consecutive_failures": health_status.get("consecutive_failures", 0),
+            # ADD THESE:
+            "fifo_monitors_active": fifo_monitors,
+            "telegram_notifications": "enabled"
+            if hasattr(self, "fifo_monitoring_service")
+            else "disabled",
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 def main():

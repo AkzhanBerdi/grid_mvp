@@ -70,6 +70,114 @@ class DualScaleGridManager:
             "dual_scale_adaptations": 0,
         }
 
+    async def get_account_balance(self):
+        """Get account balance for notifications"""
+        try:
+            account = self._safe_binance_call("get_account")
+            balances = {
+                balance["asset"]: float(balance["free"])
+                for balance in account["balances"]
+            }
+            return balances
+        except Exception as e:
+            self.logger.error(f"Failed to get account balance: {e}")
+            return {}
+
+    async def get_current_price(self, symbol: str):
+        """Get current price for notifications"""
+        try:
+            ticker = self._safe_binance_call("get_symbol_ticker", symbol=symbol)
+            return float(ticker["price"])
+        except Exception as e:
+            self.logger.error(f"Failed to get current price for {symbol}: {e}")
+            return 0.0
+
+    async def send_grid_startup_notification(
+        self,
+        client_id: int,
+        symbol: str,
+        total_capital: float,
+        base_orders: int,
+        enhanced_orders: int,
+        total_orders: int,
+    ):
+        """Send comprehensive grid startup notification"""
+        try:
+            from services.telegram_notifier import TelegramNotifier
+            from utils.fifo_telegram_monitor import FIFOProfitMonitor
+
+            # Initialize notifiers
+            telegram_notifier = TelegramNotifier()
+
+            if not telegram_notifier.enabled:
+                self.logger.warning("Telegram notifications disabled")
+                return
+
+            # Get current account balances for the notification
+            account_balances = await self.get_account_balance()
+            ada_balance = float(account_balances.get("ADA", 0))
+            usdt_balance = float(account_balances.get("USDT", 0))
+
+            # Calculate orders breakdown
+            base_buy_orders = base_orders // 2
+            base_sell_orders = base_orders - base_buy_orders
+            enhanced_buy_orders = enhanced_orders // 2
+            enhanced_sell_orders = enhanced_orders - enhanced_buy_orders
+
+            # Get current price
+            current_price = await self.get_current_price(symbol)
+
+            # Create comprehensive startup message
+            startup_message = f"""🚀 **Grid Trading System ACTIVATED**
+
+    **📊 Trading Pair:** {symbol}
+    **💰 Total Capital:** ${total_capital:,.2f}
+    **📈 Current Price:** ${current_price:.4f}
+
+    **🔧 Grid Configuration:**
+    💙 **Base Grid (35%):** {base_orders} orders
+    • Buy Orders: {base_buy_orders}
+    • Sell Orders: {base_sell_orders}
+    • Spacing: 2.5%
+
+    🚀 **Enhanced Grid (65%):** {enhanced_orders} orders  
+    • Buy Orders: {enhanced_buy_orders}
+    • Sell Orders: {enhanced_sell_orders}
+    • Spacing: 2.0%
+
+    **📊 Total Active Orders:** {total_orders}
+
+    **💼 Account Status:**
+    • ADA Balance: {ada_balance:,.2f}
+    • USDT Balance: ${usdt_balance:,.2f}
+
+    **⚠️ Order Placement Summary:**
+    • Planned Orders: 26
+    • Successfully Placed: {total_orders}
+    {"• ⚠️ Some sell orders skipped due to insufficient ADA balance" if total_orders < 26 else "• ✅ All orders placed successfully"}
+
+    **🎯 System Status:** ACTIVE & MONITORING
+    **⏰ Started:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}
+
+    💡 **The grid is now hunting for profits!**"""
+
+            # Send the startup notification
+            await telegram_notifier.send_message(startup_message)
+
+            # Initialize FIFO monitoring with startup notification
+            try:
+                fifo_monitor = FIFOProfitMonitor(client_id)
+                await fifo_monitor.initialize()  # This sends its own startup status
+            except Exception as e:
+                self.logger.warning(f"FIFO monitor initialization failed: {e}")
+
+            self.logger.info(
+                f"✅ Grid startup notification sent for client {client_id}"
+            )
+
+        except Exception as e:
+            self.logger.error(f"Failed to send grid startup notification: {e}")
+
     def _safe_binance_call(self, method_name: str, *args, **kwargs):
         """Simplified API calls with automatic timestamp handling"""
         try:
@@ -251,7 +359,11 @@ class DualScaleGridManager:
                 },
             }
 
-            self.logger.info("✅ 35/65 dual-scale grid system activated!")
+            await self.complete_grid_initialization(
+                self.client_id, symbol, total_capital
+            )
+            self.active_grids[symbol] = adaptive_config
+            asyncio.create_task(self._monitor_dual_scale_grid(symbol))
             return result
 
         except Exception as e:
@@ -438,7 +550,7 @@ class DualScaleGridManager:
             raise
 
     async def _execute_smart_buy_setup(self, grid_config, grid_type: str) -> bool:
-        """Execute buy orders with FIXED balance checking"""
+        """Execute buy orders with FIXED balance checking - NO PREMATURE NOTIFICATIONS"""
         try:
             symbol = grid_config.symbol
             orders_placed = 0
@@ -522,21 +634,11 @@ class DualScaleGridManager:
                     )
 
                     if order and order.get("status") in ["NEW", "PARTIALLY_FILLED"]:
-                        # FIFO Integration - Notify Enhanced Grid Orchestrator
-                        try:
-                            if hasattr(self, "client_id") and hasattr(self, "logger"):
-                                # This would ideally call the orchestrator's FIFO method
-                                # For now, just log that we should notify FIFO
-                                self.logger.info(
-                                    f"📊 FIFO: Should log trade for client {self.client_id}"
-                                )
-                        except Exception as e:
-                            self.logger.warning(f"FIFO logging failed: {e}")
                         level["order_id"] = order["orderId"]
                         orders_placed += 1
                         available_usdt -= notional_value
 
-                        # Log order
+                        # Log order PLACEMENT (not execution!)
                         self.trade_repo.log_grid_order(
                             client_id=self.client_id,
                             symbol=symbol,
@@ -547,8 +649,9 @@ class DualScaleGridManager:
                             grid_level=level["level"],
                         )
 
+                        # ✅ CORRECT: Only log placement, not execution
                         self.logger.info(
-                            f"✅ {grid_type}: {formatted_quantity} at {formatted_price} = ${notional_value:.2f}"
+                            f"✅ {grid_type} ORDER PLACED: {formatted_quantity} at {formatted_price} = ${notional_value:.2f}"
                         )
 
                         if available_usdt < min_notional:
@@ -569,7 +672,7 @@ class DualScaleGridManager:
             return False
 
     async def _execute_smart_sell_setup(self, grid_config, grid_type: str) -> bool:
-        """Execute sell orders with FIXED balance checking"""
+        """Execute sell orders with FIXED balance checking - NO PREMATURE NOTIFICATIONS"""
         try:
             symbol = grid_config.symbol
             base_asset = symbol.replace("USDT", "")
@@ -652,21 +755,11 @@ class DualScaleGridManager:
                     )
 
                     if order and order.get("status") in ["NEW", "PARTIALLY_FILLED"]:
-                        # FIFO Integration - Notify Enhanced Grid Orchestrator
-                        try:
-                            if hasattr(self, "client_id") and hasattr(self, "logger"):
-                                # This would ideally call the orchestrator's FIFO method
-                                # For now, just log that we should notify FIFO
-                                self.logger.info(
-                                    f"📊 FIFO: Should log trade for client {self.client_id}"
-                                )
-                        except Exception as e:
-                            self.logger.warning(f"FIFO logging failed: {e}")
                         level["order_id"] = order["orderId"]
                         orders_placed += 1
                         available_base -= required_quantity
 
-                        # Log order
+                        # Log order PLACEMENT (not execution!)
                         self.trade_repo.log_grid_order(
                             client_id=self.client_id,
                             symbol=symbol,
@@ -677,8 +770,9 @@ class DualScaleGridManager:
                             grid_level=level["level"],
                         )
 
+                        # ✅ CORRECT: Only log placement, not execution
                         self.logger.info(
-                            f"✅ {grid_type}: {formatted_quantity} at {formatted_price} = ${notional_value:.2f}"
+                            f"✅ {grid_type} ORDER PLACED: {formatted_quantity} at {formatted_price} = ${notional_value:.2f}"
                         )
 
                         if available_base < required_quantity:
@@ -814,8 +908,6 @@ class DualScaleGridManager:
         adaptive_config: AdaptiveGridConfig,
     ) -> None:
         """Process filled orders and replace them intelligently"""
-        self.notify_fifo()
-
         try:
             filled_orders = []
 
@@ -838,7 +930,18 @@ class DualScaleGridManager:
                     filled_orders.append(("SELL", level))
 
             for side, level in filled_orders:
-                self.notify_fifo()
+                # Calculate total value
+                total_value = level["quantity"] * level["price"]
+
+                # ✅ CORRECT TIMING: Notify when order is actually FILLED
+                await self.notify_trade_execution(
+                    self.client_id,
+                    grid_config.symbol,
+                    side,
+                    level["quantity"],
+                    level["price"],
+                    total_value,
+                )
 
                 self.trade_repo.log_trade_execution(
                     client_id=self.client_id,
@@ -865,7 +968,7 @@ class DualScaleGridManager:
                     self.performance_metrics["total_profit"] += estimated_profit
 
                 self.logger.info(
-                    f"💰 {grid_type} {side} filled: {level['quantity']} at ${level['price']:.4f}"
+                    f"💰 {grid_type} {side} FILLED: {level['quantity']} at ${level['price']:.4f} = ${total_value:.2f}"
                 )
 
                 await self._replace_filled_order_dual_scale(
@@ -874,7 +977,6 @@ class DualScaleGridManager:
 
         except Exception as e:
             self.logger.error(f"❌ Process filled orders error for {grid_type}: {e}")
-            self.notify_fifo()
 
     async def _replace_filled_order_dual_scale(
         self,
@@ -1314,3 +1416,120 @@ class DualScaleGridManager:
         except Exception as e:
             if hasattr(self, "logger"):
                 self.logger.warning(f"FIFO logging failed: {e}")
+
+    async def complete_grid_initialization(
+        self, client_id: int, symbol: str, total_capital: float
+    ):
+        """Complete grid initialization with notifications - FIXED"""
+        try:
+            # Count active orders from both grids
+            base_buy_orders = len(
+                [
+                    l
+                    for l in self.active_grids[symbol].base_grid.buy_levels
+                    if l.get("order_id")
+                ]
+            )
+            base_sell_orders = len(
+                [
+                    l
+                    for l in self.active_grids[symbol].base_grid.sell_levels
+                    if l.get("order_id")
+                ]
+            )
+            enhanced_buy_orders = len(
+                [
+                    l
+                    for l in self.active_grids[symbol].enhanced_grid.buy_levels
+                    if l.get("order_id")
+                ]
+            )
+            enhanced_sell_orders = len(
+                [
+                    l
+                    for l in self.active_grids[symbol].enhanced_grid.sell_levels
+                    if l.get("order_id")
+                ]
+            )
+
+            total_orders = (
+                base_buy_orders
+                + base_sell_orders
+                + enhanced_buy_orders
+                + enhanced_sell_orders
+            )
+            base_total = base_buy_orders + base_sell_orders
+            enhanced_total = enhanced_buy_orders + enhanced_sell_orders
+
+            # Your existing success logging
+            self.logger.info("✅ 35/65 Dual-scale grids initialized:")
+            self.logger.info(f"   💙 Base Grid: {base_total} orders active")
+            self.logger.info(f"   🚀 Enhanced Grid: {enhanced_total} orders active")
+            self.logger.info(f"   📊 Total system orders: {total_orders}")
+            self.logger.info("✅ 35/65 dual-scale grid system activated!")
+
+            # Send comprehensive startup notification
+            await self.send_grid_startup_notification(
+                client_id=client_id,
+                symbol=symbol,
+                total_capital=total_capital,
+                base_orders=base_total,
+                enhanced_orders=enhanced_total,
+                total_orders=total_orders,
+            )
+
+        except Exception as e:
+            self.logger.error(f"Failed to complete grid initialization: {e}")
+
+    async def notify_trade_execution(
+        self,
+        client_id: int,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float,
+        total_value: float,
+    ):
+        """Send trade execution notification"""
+        try:
+            from utils.fifo_telegram_monitor import FIFOMonitoringService
+
+            # Get or create monitoring service instance
+            if not hasattr(self, "fifo_monitoring_service"):
+                self.fifo_monitoring_service = FIFOMonitoringService()
+                await self.fifo_monitoring_service.add_client_monitor(client_id)
+
+            # Notify the monitoring service of trade execution
+            await self.fifo_monitoring_service.on_trade_executed(
+                client_id=client_id,
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                price=price,
+            )
+
+            # Send immediate trade notification for significant trades
+            if side == "SELL" and total_value >= 50.0:  # Notify sells over $50
+                from services.telegram_notifier import TelegramNotifier
+
+                notifier = TelegramNotifier()
+
+                if notifier.enabled:
+                    estimated_profit = (
+                        total_value * 0.025
+                    )  # Assume 2.5% grid spacing profit
+
+                    message = f"""💰 **Trade Executed**
+
+    🎯 **{symbol}** {side}
+    📊 Quantity: {quantity:.2f} 
+    💵 Price: ${price:.4f}
+    💰 Value: ${total_value:.2f}
+    📈 Est. Profit: ${estimated_profit:.2f}
+
+    ⏰ {datetime.now().strftime("%H:%M:%S")}"""
+
+                    await notifier.send_message(message)
+
+        except Exception as e:
+            self.logger.error(f"Failed to notify trade execution: {e}")
