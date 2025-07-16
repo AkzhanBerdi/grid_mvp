@@ -2,11 +2,13 @@
 """
 GridTrader Pro - Simplified Client Service
 Production-ready grid trading for paying clients
+WITH INTEGRATED NETWORK RECOVERY
 """
 
 import asyncio
 import logging
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from telegram.ext import (
@@ -19,17 +21,13 @@ from telegram.ext import (
 
 from config import Config
 from database.db_setup import DatabaseSetup
-
-# In main.py, replace ClientHandler with SmartClientHandler
 from handlers.smart_client_handler import SmartClientHandler
-
-# from handlers.client_handler import ClientHandler
-# from services.grid_orchestrator import GridOrchestrator
 from services.enhanced_grid_orchestrator import EnhancedGridOrchestrator
+from utils.network_recovery import create_network_recovery_service
 
 
 class GridTradingService:
-    """Simplified Grid Trading Service for Paying Clients"""
+    """Simplified Grid Trading Service for Paying Clients with Network Recovery"""
 
     def __init__(self):
         self.config = Config()
@@ -40,11 +38,18 @@ class GridTradingService:
         self.grid_orchestrator = EnhancedGridOrchestrator()
         self.handler = SmartClientHandler()
 
+        # Network Recovery Integration (NEW)
+        self.network_service = create_network_recovery_service()
+        self.last_health_check = datetime.now()
+        self.health_check_interval = timedelta(minutes=5)  # Check every 5 minutes
+
         # Service state
         self.running = False
         self.telegram_app = None
 
-        self.logger.info("🤖 GridTrader Pro Client Service initialized")
+        self.logger.info(
+            "🤖 GridTrader Pro Client Service initialized with Network Recovery"
+        )
 
     def _setup_logging(self) -> logging.Logger:
         """Setup logging configuration"""
@@ -69,46 +74,173 @@ class GridTradingService:
             self.logger.error(f"❌ Database initialization failed: {e}")
             raise
 
+    async def _startup_checks(self):
+        """Perform startup connectivity and health checks (NEW)"""
+        self.logger.info("🔍 Performing startup connectivity checks...")
+
+        # Check network connectivity before starting
+        connectivity_ok = await self.network_service.startup_connectivity_check()
+
+        if not connectivity_ok:
+            self.logger.warning("⚠️ Some network services are offline")
+            self.logger.warning("Bot will start but may have limited functionality")
+        else:
+            self.logger.info("✅ All network services operational")
+
+        return connectivity_ok
+
+    async def _periodic_health_check(self):
+        """Perform periodic health check if interval has passed (NEW)"""
+        now = datetime.now()
+
+        if now - self.last_health_check >= self.health_check_interval:
+            self.last_health_check = now
+
+            try:
+                # Run comprehensive health check
+                health_ok = await self.network_service.periodic_health_check()
+
+                if not health_ok:
+                    self.logger.critical(
+                        "🚨 Network health check failed - emergency conditions detected"
+                    )
+
+                    # Check if we should trigger emergency stop
+                    emergency = await self.network_service.check_emergency_conditions()
+                    if emergency:
+                        self.logger.critical("🚨 Network emergency stop triggered")
+                        return False  # Signal to stop the service
+
+                # Log network status
+                health_status = self.network_service.get_network_health_display()
+                self.logger.info(f"📊 {health_status}")
+
+            except Exception as e:
+                # Don't let health check failures crash the bot
+                self.logger.error(f"Health check error: {e}")
+                await self.network_service.health_monitor.handle_network_error(
+                    e, "periodic_health_check"
+                )
+
+        return True  # Continue operation
+
     async def grid_management_loop(self):
-        """Main loop to manage all client grid trading"""
-        self.logger.info("🔄 Starting grid management loop")
+        """Enhanced grid management loop with network recovery"""
+        self.logger.info("🔄 Starting grid management loop with network recovery")
 
         while self.running:
             try:
-                # Update all active grids
-                await self.grid_orchestrator.update_all_grids()
+                # Periodic health check (NEW)
+                health_ok = await self._periodic_health_check()
+                if not health_ok:
+                    self.logger.critical(
+                        "🚨 Health check failed - stopping grid management"
+                    )
+                    self.running = False
+                    break
 
-                # Log status every 5 minutes
+                # Update all active grids (wrapped with network recovery)
+                try:
+                    await self._safe_grid_update()
+                except Exception as e:
+                    # Enhanced error handling with network context
+                    await self.network_service.health_monitor.handle_network_error(
+                        e, "grid_update"
+                    )
+
+                    # Check if this is a network-related emergency
+                    emergency = await self.network_service.check_emergency_conditions()
+                    if emergency:
+                        self.logger.critical(
+                            "🚨 Grid update emergency - stopping service"
+                        )
+                        self.running = False
+                        break
+
+                    # Log error and continue
+                    self.logger.error(f"Grid update error: {e}")
+
+                # Log status every 5 minutes (your existing pattern)
                 active_grids = self.grid_orchestrator.get_all_active_grids()
                 if active_grids:
                     self.logger.info(f"📊 Managing {len(active_grids)} active grids")
 
-                # Wait 30 seconds before next update
+                # Wait 30 seconds before next update (your existing pattern)
                 await asyncio.sleep(30)
 
             except Exception as e:
+                # Top-level error handling with network recovery
+                await self.network_service.health_monitor.handle_network_error(
+                    e, "grid_management_loop"
+                )
+
                 self.logger.error(f"Error in grid management loop: {e}")
                 await asyncio.sleep(60)  # Wait longer on error
 
+    async def _safe_grid_update(self):
+        """Grid update wrapped with network recovery (NEW)"""
+        try:
+            # Your existing grid update logic
+            await self.grid_orchestrator.update_all_grids()
+
+            # Signal successful network operation
+            await self.network_service.health_monitor.handle_network_success(
+                "grid_update"
+            )
+
+        except Exception as e:
+            # Let the calling function handle the error
+            raise e
+
     async def telegram_start(self, update, context):
-        """Handle /start command"""
+        """Handle /start command with network recovery"""
         try:
             await self.handler.handle_start(update, context)
+
+            # Signal successful Telegram operation
+            await self.network_service.health_monitor.handle_network_success(
+                "telegram_start"
+            )
+
         except Exception as e:
+            # Enhanced error handling for Telegram operations
+            await self.network_service.health_monitor.handle_network_error(
+                e, "telegram_start"
+            )
             self.logger.error(f"Error in start handler: {e}")
 
     async def telegram_callback(self, update, context):
-        """Handle callback queries"""
+        """Handle callback queries with network recovery"""
         try:
             await self.handler.handle_callback(update, context)
+
+            # Signal successful Telegram operation
+            await self.network_service.health_monitor.handle_network_success(
+                "telegram_callback"
+            )
+
         except Exception as e:
+            # Enhanced error handling for Telegram operations
+            await self.network_service.health_monitor.handle_network_error(
+                e, "telegram_callback"
+            )
             self.logger.error(f"Error in callback handler: {e}")
 
     async def telegram_message(self, update, context):
-        """Handle text messages"""
+        """Handle text messages with network recovery"""
         try:
             await self.handler.handle_message(update, context)
+
+            # Signal successful Telegram operation
+            await self.network_service.health_monitor.handle_network_success(
+                "telegram_message"
+            )
+
         except Exception as e:
+            # Enhanced error handling for Telegram operations
+            await self.network_service.health_monitor.handle_network_error(
+                e, "telegram_message"
+            )
             self.logger.error(f"Error in message handler: {e}")
 
     def setup_telegram_bot(self):
@@ -163,6 +295,10 @@ class GridTradingService:
                 self.logger.info("✅ Both grid management and Telegram bot started")
 
             except Exception as e:
+                # Enhanced Telegram startup error handling
+                await self.network_service.health_monitor.handle_network_error(
+                    e, "telegram_startup"
+                )
                 self.logger.error(f"Failed to start Telegram bot: {e}")
                 self.logger.info("🤖 Continuing with grid management only")
         else:
@@ -174,6 +310,10 @@ class GridTradingService:
         except KeyboardInterrupt:
             self.logger.info("🛑 Service stopped by user")
         except Exception as e:
+            # Enhanced top-level error handling
+            await self.network_service.health_monitor.handle_network_error(
+                e, "service_runtime"
+            )
             self.logger.error(f"❌ Service error: {e}")
         finally:
             # Cleanup
@@ -185,7 +325,10 @@ class GridTradingService:
         self.running = False
 
         # Stop all grids first
-        await self.grid_orchestrator.shutdown_all_grids()
+        try:
+            await self.grid_orchestrator.shutdown_all_grids()
+        except Exception as e:
+            self.logger.error(f"Error stopping grids: {e}")
 
         # Stop Telegram bot
         if self.telegram_app:
@@ -200,12 +343,17 @@ class GridTradingService:
         self.logger.info("✅ GridTrader Pro Service stopped")
 
     async def start_async(self):
-        """Async start method"""
-        self.logger.info("🚀 Starting GridTrader Pro Client Service")
+        """Enhanced async start method with network recovery"""
+        self.logger.info(
+            "🚀 Starting GridTrader Pro Client Service with Network Recovery"
+        )
 
         try:
             # Initialize database
             self._init_database()
+
+            # Perform startup connectivity checks (NEW)
+            await self._startup_checks()
 
             # Setup Telegram bot
             self.setup_telegram_bot()
@@ -215,6 +363,10 @@ class GridTradingService:
             await self.run_service()
 
         except Exception as e:
+            # Enhanced startup error handling
+            await self.network_service.health_monitor.handle_network_error(
+                e, "service_startup"
+            )
             self.logger.error(f"❌ Startup error: {e}")
             raise
 
@@ -230,6 +382,26 @@ class GridTradingService:
         finally:
             self.running = False
 
+    def get_service_status(self):
+        """Get comprehensive service status including network health (NEW)"""
+        try:
+            network_health = self.network_service.get_network_health_display()
+            active_grids = (
+                len(self.grid_orchestrator.get_all_active_grids())
+                if hasattr(self.grid_orchestrator, "get_all_active_grids")
+                else 0
+            )
+
+            return {
+                "running": self.running,
+                "network_health": network_health,
+                "active_grids": active_grids,
+                "telegram_bot": self.telegram_app is not None,
+                "last_health_check": self.last_health_check.isoformat(),
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
 
 def main():
     """Entry point"""
@@ -244,6 +416,7 @@ def main():
     print("✅ Client API key management")
     print("✅ Professional grid trading")
     print("✅ Telegram interface")
+    print("✅ Network recovery enabled")  # NEW
     print("✅ Production ready")
     print("=" * 50)
 
