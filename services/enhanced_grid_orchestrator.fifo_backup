@@ -14,7 +14,6 @@ from repositories.trade_repository import TradeRepository
 # FIFO Integration
 try:
     from utils.fifo_telegram_monitor import FIFOMonitoringService
-
     FIFO_AVAILABLE = True
 except ImportError:
     FIFO_AVAILABLE = False
@@ -140,17 +139,6 @@ class EnhancedGridOrchestrator:
             manager = self.adaptive_managers[client_id]
             result = await manager.start_dual_scale_grid(symbol, capital)
 
-            # FIFO Integration - Log grid start/trade activity
-            if hasattr(self, "fifo_service") and self.fifo_service:
-                try:
-                    # This is where we'd log trade execution if we had the trade details
-                    # For now, just log that grid activity occurred
-                    self.logger.info(
-                        f"📊 FIFO: Grid activity for client {client_id} on {symbol}"
-                    )
-                except Exception as e:
-                    self.logger.warning(f"FIFO logging failed: {e}")
-
             if result["success"]:
                 # Update client status
                 client = self.client_repo.get_client(client_id)
@@ -207,33 +195,11 @@ class EnhancedGridOrchestrator:
 
             # Get all active grids
             grids_status = manager.get_all_grids_status()
-
-            # FIFO Integration - Log grid start/trade activity
-            if hasattr(self, "fifo_service") and self.fifo_service:
-                try:
-                    # This is where we'd log trade execution if we had the trade details
-                    # For now, just log that grid activity occurred
-                    self.logger.info(
-                        f"📊 FIFO: Grid activity for client {client_id} on {symbol}"
-                    )
-                except Exception as e:
-                    self.logger.warning(f"FIFO logging failed: {e}")
             grids_stopped = len(grids_status)
 
             # Stop each grid
             for symbol in list(grids_status.keys()):
                 stop_result = await manager.stop_adaptive_grid(symbol)
-
-                # FIFO Integration - Log grid start/trade activity
-                if hasattr(self, "fifo_service") and self.fifo_service:
-                    try:
-                        # This is where we'd log trade execution if we had the trade details
-                        # For now, just log that grid activity occurred
-                        self.logger.info(
-                            f"📊 FIFO: Grid activity for client {client_id} on {symbol}"
-                        )
-                    except Exception as e:
-                        self.logger.warning(f"FIFO logging failed: {e}")
                 if stop_result["success"]:
                     total_orders_cancelled += 10  # Estimate based on grid size
 
@@ -275,17 +241,6 @@ class EnhancedGridOrchestrator:
             if client_id in self.adaptive_managers:
                 manager = self.adaptive_managers[client_id]
                 grids_status = manager.get_all_grids_status()
-
-                # FIFO Integration - Log grid start/trade activity
-                if hasattr(self, "fifo_service") and self.fifo_service:
-                    try:
-                        # This is where we'd log trade execution if we had the trade details
-                        # For now, just log that grid activity occurred
-                        self.logger.info(
-                            f"📊 FIFO: Grid activity for client {client_id} on {symbol}"
-                        )
-                    except Exception as e:
-                        self.logger.warning(f"FIFO logging failed: {e}")
 
                 for symbol, grid_status in grids_status.items():
                     if grid_status.get("active"):
@@ -337,11 +292,7 @@ class EnhancedGridOrchestrator:
         if FIFO_AVAILABLE:
             try:
                 from main import GridTradingService
-
-                if (
-                    hasattr(GridTradingService, "_instance")
-                    and GridTradingService._instance
-                ):
+                if hasattr(GridTradingService, '_instance') and GridTradingService._instance:
                     self.fifo_service = GridTradingService._instance.fifo_service
                 else:
                     self.fifo_service = FIFOMonitoringService()
@@ -349,6 +300,7 @@ class EnhancedGridOrchestrator:
                 self.fifo_service = None
         else:
             self.fifo_service = None
+
 
     def _generate_trading_insights(
         self, trade_stats: Dict, adaptive_performance: Dict
@@ -427,17 +379,6 @@ class EnhancedGridOrchestrator:
             manager = self.adaptive_managers[client_id]
             grids_status = manager.get_all_grids_status()
 
-            # FIFO Integration - Log grid start/trade activity
-            if hasattr(self, "fifo_service") and self.fifo_service:
-                try:
-                    # This is where we'd log trade execution if we had the trade details
-                    # For now, just log that grid activity occurred
-                    self.logger.info(
-                        f"📊 FIFO: Grid activity for client {client_id} on {symbol}"
-                    )
-                except Exception as e:
-                    self.logger.warning(f"FIFO logging failed: {e}")
-
             # Enhanced status with smart trading info
             enhanced_status = {
                 "active_grids": {},
@@ -468,68 +409,49 @@ class EnhancedGridOrchestrator:
     def get_all_active_grids(self) -> Dict:
         """Get all active grids across all clients"""
         all_grids = {}
-
-    async def notify_fifo_trade_execution(
-        self, client_id: int, symbol: str, side: str, quantity: float, price: float
-    ):
+    async def notify_fifo_trade_execution(self, client_id: int, symbol: str, side: str, quantity: float, price: float):
         """Notify FIFO service of trade execution"""
-        if hasattr(self, "fifo_service") and self.fifo_service:
+        if hasattr(self, 'fifo_service') and self.fifo_service:
             try:
                 await self.fifo_service.on_trade_executed(
                     client_id=client_id,
                     symbol=symbol,
                     side=side,
                     quantity=quantity,
-                    price=price,
+                    price=price
                 )
-                self.logger.info(
-                    f"📊 FIFO: {side} {quantity} {symbol} @ ${price:.4f} for client {client_id}"
-                )
-
+                self.logger.info(f"📊 FIFO: {side} {quantity} {symbol} @ ${price:.4f} for client {client_id}")
+                
                 # Get updated profit stats
-                if (
-                    hasattr(self.fifo_service, "monitors")
-                    and client_id in self.fifo_service.monitors
-                ):
+                if hasattr(self.fifo_service, 'monitors') and client_id in self.fifo_service.monitors:
                     calculator = self.fifo_service.monitors[client_id]
                     stats = calculator.calculate_fifo_profit(client_id)
-                    if stats["total_profit"] != 0:
-                        self.logger.info(
-                            f"💰 Client {client_id} FIFO Profit: ${stats['total_profit']:.2f}"
-                        )
-
+                    if stats['total_profit'] != 0:
+                        self.logger.info(f"💰 Client {client_id} FIFO Profit: ${stats['total_profit']:.2f}")
+                        
             except Exception as e:
                 self.logger.warning(f"FIFO notification failed: {e}")
-
+    
     def get_fifo_stats(self, client_id: int) -> dict:
         """Get current FIFO stats for a client"""
         try:
-            if hasattr(self, "fifo_service") and self.fifo_service:
-                if (
-                    hasattr(self.fifo_service, "monitors")
-                    and client_id in self.fifo_service.monitors
-                ):
+            if hasattr(self, 'fifo_service') and self.fifo_service:
+                if hasattr(self.fifo_service, 'monitors') and client_id in self.fifo_service.monitors:
                     calculator = self.fifo_service.monitors[client_id]
                     return calculator.calculate_fifo_profit(client_id)
         except Exception as e:
             self.logger.warning(f"Failed to get FIFO stats: {e}")
+        
+        return {
+            'total_profit': 0.0,
+            'total_trades': 0,
+            'win_rate': 0.0
+        }
 
-        return {"total_profit": 0.0, "total_trades": 0, "win_rate": 0.0}
 
         for client_id, manager in self.adaptive_managers.items():
             try:
                 grids_status = manager.get_all_grids_status()
-
-                # FIFO Integration - Log grid start/trade activity
-                if hasattr(self, "fifo_service") and self.fifo_service:
-                    try:
-                        # This is where we'd log trade execution if we had the trade details
-                        # For now, just log that grid activity occurred
-                        self.logger.info(
-                            f"📊 FIFO: Grid activity for client {client_id} on {symbol}"
-                        )
-                    except Exception as e:
-                        self.logger.warning(f"FIFO logging failed: {e}")
                 if grids_status:
                     all_grids[client_id] = {
                         "client_id": client_id,
@@ -548,17 +470,6 @@ class EnhancedGridOrchestrator:
                 # The adaptive manager handles its own monitoring
                 # We just need to update global performance
                 grids_status = manager.get_all_grids_status()
-
-                # FIFO Integration - Log grid start/trade activity
-                if hasattr(self, "fifo_service") and self.fifo_service:
-                    try:
-                        # This is where we'd log trade execution if we had the trade details
-                        # For now, just log that grid activity occurred
-                        self.logger.info(
-                            f"📊 FIFO: Grid activity for client {client_id} on {symbol}"
-                        )
-                    except Exception as e:
-                        self.logger.warning(f"FIFO logging failed: {e}")
 
                 # Update global stats
                 total_trades = 0
@@ -606,18 +517,7 @@ class EnhancedGridOrchestrator:
             for manager in self.adaptive_managers.values():
                 try:
                     grids_status = manager.get_all_grids_status()
-
-                    # FIFO Integration - Log grid start/trade activity
-                    if hasattr(self, "fifo_service") and self.fifo_service:
-                        try:
-                            # This is where we'd log trade execution if we had the trade details
-                            # For now, just log that grid activity occurred
-                            self.logger.info(
-                                f"📊 FIFO: Grid activity for client {client_id} on {symbol}"
-                            )
-                        except Exception as e:
-                            self.logger.warning(f"FIFO logging failed: {e}")
-                        symbols.update(grids_status.keys())
+                    symbols.update(grids_status.keys())
                 except Exception as e:
                     self.logger.warning(f"Failed to get grid status from manager: {e}")
 
@@ -686,17 +586,6 @@ class EnhancedGridOrchestrator:
             for client_id, manager in self.adaptive_managers.items():
                 try:
                     grids_status = manager.get_all_grids_status()
-
-                    # FIFO Integration - Log grid start/trade activity
-                    if hasattr(self, "fifo_service") and self.fifo_service:
-                        try:
-                            # This is where we'd log trade execution if we had the trade details
-                            # For now, just log that grid activity occurred
-                            self.logger.info(
-                                f"📊 FIFO: Grid activity for client {client_id} on {symbol}"
-                            )
-                        except Exception as e:
-                            self.logger.warning(f"FIFO logging failed: {e}")
 
                     for symbol, grid_status in grids_status.items():
                         if grid_status.get("active"):

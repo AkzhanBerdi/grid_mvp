@@ -7,6 +7,7 @@ WITH INTEGRATED NETWORK RECOVERY
 
 import asyncio
 import logging
+import sqlite3
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -25,6 +26,15 @@ from handlers.smart_client_handler import SmartClientHandler
 from services.enhanced_grid_orchestrator import EnhancedGridOrchestrator
 from utils.network_recovery import create_network_recovery_service
 
+# FIFO Profit Monitoring Integration
+try:
+    from utils.fifo_telegram_monitor import FIFOMonitoringService
+
+    FIFO_AVAILABLE = True
+except ImportError:
+    print("⚠️ FIFO monitoring not available - install analytics dependencies")
+    FIFO_AVAILABLE = False
+
 
 class GridTradingService:
     """Simplified Grid Trading Service for Paying Clients with Network Recovery"""
@@ -40,6 +50,12 @@ class GridTradingService:
 
         # Network Recovery Integration (NEW)
         self.network_service = create_network_recovery_service()
+
+        # FIFO Profit Monitoring (NEW)
+        if FIFO_AVAILABLE:
+            self.fifo_service = FIFOMonitoringService()
+        else:
+            self.fifo_service = None
         self.last_health_check = datetime.now()
         self.health_check_interval = timedelta(minutes=5)  # Check every 5 minutes
 
@@ -349,26 +365,44 @@ class GridTradingService:
         )
 
         try:
-            # Initialize database
             self._init_database()
-
-            # Perform startup connectivity checks (NEW)
             await self._startup_checks()
 
-            # Setup Telegram bot
+            if self.fifo_service:
+                await self._init_fifo_monitoring()
+
             self.setup_telegram_bot()
 
-            # Start main loop
             self.running = True
             await self.run_service()
 
         except Exception as e:
-            # Enhanced startup error handling
             await self.network_service.health_monitor.handle_network_error(
                 e, "service_startup"
             )
             self.logger.error(f"❌ Startup error: {e}")
             raise
+
+    async def _init_fifo_monitoring(self):
+        """Initialize FIFO monitoring for existing clients"""
+        try:
+            # Get all active clients
+            with sqlite3.connect(self.config.DATABASE_PATH) as conn:
+                cursor = conn.execute(
+                    "SELECT telegram_id FROM clients WHERE status = 'active'"
+                )
+                active_clients = [row[0] for row in cursor.fetchall()]
+
+            # Add FIFO monitoring for each client
+            for client_id in active_clients:
+                await self.fifo_service.add_client_monitor(client_id)
+
+            self.logger.info(
+                f"✅ FIFO monitoring initialized for {len(active_clients)} clients"
+            )
+
+        except Exception as e:
+            self.logger.error(f"Failed to initialize FIFO monitoring: {e}")
 
     def start(self):
         """Main start method - runs async event loop"""

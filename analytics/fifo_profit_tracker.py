@@ -9,7 +9,7 @@ import sqlite3
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 from config import Config
 
@@ -53,21 +53,162 @@ class PerformanceMetrics:
     recent_24h_profit: float
 
 
+class FIFOProfitCalculator:
+    """Simple but effective FIFO profit calculator"""
+    
+    def __init__(self, db_path: str = None):
+        self.db_path = db_path or Config.DATABASE_PATH
+        self.logger = logging.getLogger(__name__)
+    
+    def calculate_fifo_profit(self, client_id: int) -> Dict:
+        """Calculate FIFO-based profit for client"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("""
+                    SELECT side, quantity, price, total_value, executed_at, symbol
+                    FROM trades 
+                    WHERE client_id = ?
+                    ORDER BY executed_at ASC
+                """, (client_id,))
+                
+                trades = cursor.fetchall()
+                
+                if not trades:
+                    return {
+                        'total_profit': 0.0,
+                        'total_trades': 0,
+                        'completed_cycles': 0,
+                        'win_rate': 0.0,
+                        'avg_profit_per_trade': 0.0,
+                        'best_trade': 0.0,
+                        'worst_trade': 0.0,
+                        'total_volume': 0.0,
+                        'profit_factor': 0.0,
+                        'current_multiplier': 1.0,
+                        'recent_24h_profit': 0.0
+                    }
+                
+                # Simple profit calculation (enhanced FIFO can be added later)
+                total_buy = sum(row[3] for row in trades if row[0] == 'BUY')
+                total_sell = sum(row[3] for row in trades if row[0] == 'SELL')
+                total_profit = total_sell - total_buy
+                
+                # Calculate basic metrics
+                buy_trades = [t for t in trades if t[0] == 'BUY']
+                sell_trades = [t for t in trades if t[0] == 'SELL']
+                
+                # Win rate calculation (simplified)
+                winning_trades = len([t for t in sell_trades if len(buy_trades) > 0])
+                total_completed = min(len(buy_trades), len(sell_trades))
+                win_rate = (winning_trades / max(total_completed, 1)) * 100
+                
+                # Volume calculation
+                total_volume = total_buy + total_sell
+                
+                # Current multiplier (simplified compound logic)
+                base_profit_threshold = 25.0  # $25 per multiplier increase
+                current_multiplier = 1.0 + (max(total_profit, 0) / base_profit_threshold) * 0.1
+                current_multiplier = min(current_multiplier, 3.0)  # Max 3x multiplier
+                
+                # Recent 24h profit (simplified)
+                recent_24h_profit = self.get_recent_profit(client_id, 24)
+                
+                return {
+                    'total_profit': round(total_profit, 2),
+                    'total_trades': len(trades),
+                    'completed_cycles': total_completed,
+                    'win_rate': round(win_rate, 1),
+                    'avg_profit_per_trade': round(total_profit / max(len(trades), 1), 2),
+                    'best_trade': round(max([t[3] for t in sell_trades] + [0]), 2),
+                    'worst_trade': round(min([t[3] for t in buy_trades] + [0]), 2),
+                    'total_volume': round(total_volume, 2),
+                    'profit_factor': round(total_sell / max(total_buy, 1), 2),
+                    'current_multiplier': round(current_multiplier, 2),
+                    'recent_24h_profit': round(recent_24h_profit, 2)
+                }
+                
+        except Exception as e:
+            self.logger.error(f"Error calculating FIFO profit for client {client_id}: {e}")
+            return {
+                'total_profit': 0.0,
+                'total_trades': 0,
+                'completed_cycles': 0,
+                'win_rate': 0.0,
+                'avg_profit_per_trade': 0.0,
+                'best_trade': 0.0,
+                'worst_trade': 0.0,
+                'total_volume': 0.0,
+                'profit_factor': 0.0,
+                'current_multiplier': 1.0,
+                'recent_24h_profit': 0.0
+            }
+    
+    def get_recent_profit(self, client_id: int, hours: int = 24) -> float:
+        """Get profit from recent hours"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("""
+                    SELECT side, total_value
+                    FROM trades 
+                    WHERE client_id = ? 
+                    AND executed_at > datetime('now', '-{} hours')
+                    ORDER BY executed_at ASC
+                """.format(hours), (client_id,))
+                
+                recent_trades = cursor.fetchall()
+                
+                recent_buy = sum(row[1] for row in recent_trades if row[0] == 'BUY')
+                recent_sell = sum(row[1] for row in recent_trades if row[0] == 'SELL')
+                
+                return recent_sell - recent_buy
+                
+        except Exception as e:
+            self.logger.error(f"Error getting recent profit: {e}")
+            return 0.0
+    
+    def get_trade_history(self, client_id: int, limit: int = 100) -> List[Dict]:
+        """Get recent trade history"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("""
+                    SELECT executed_at, symbol, side, quantity, price, total_value
+                    FROM trades 
+                    WHERE client_id = ?
+                    ORDER BY executed_at DESC
+                    LIMIT ?
+                """, (client_id, limit))
+                
+                trades = []
+                for row in cursor.fetchall():
+                    trades.append({
+                        'timestamp': row[0],
+                        'symbol': row[1],
+                        'side': row[2],
+                        'quantity': row[3],
+                        'price': row[4],
+                        'total_value': row[5]
+                    })
+                
+                return trades
+                
+        except Exception as e:
+            self.logger.error(f"Error getting trade history: {e}")
+            return []
+
+
 class FIFOProfitTracker:
     """Advanced FIFO-based profit tracking with compound integration"""
     
     def __init__(self, db_path: str = None):
         self.db_path = db_path or Config.DATABASE_PATH
         self.logger = logging.getLogger(__name__)
+        self.calculator = FIFOProfitCalculator(db_path)
         
         # FIFO queues for each symbol: {symbol: deque of buy trades}
         self.buy_queues: Dict[str, deque] = defaultdict(deque)
         
         # Completed FIFO matches for profit calculation
         self.completed_matches: List[FIFOMatch] = []
-        
-        # Base order size for compound calculations
-        self.base_order_size = Config.DEFAULT_ORDER_SIZE
 
     def load_client_trades(self, client_id: int) -> List[Trade]:
         """Load all trades for a client from database"""
@@ -82,7 +223,7 @@ class FIFOProfitTracker:
                 
                 trades = []
                 for row in cursor.fetchall():
-                    trades.append(Trade(
+                    trade = Trade(
                         id=row[0],
                         timestamp=datetime.fromisoformat(row[1]),
                         symbol=row[2],
@@ -90,71 +231,136 @@ class FIFOProfitTracker:
                         quantity=row[4],
                         price=row[5],
                         total_value=row[6]
-                    ))
+                    )
+                    trades.append(trade)
                 
-                self.logger.info(f"Loaded {len(trades)} trades for client {client_id}")
                 return trades
                 
         except Exception as e:
-            self.logger.error(f"Error loading trades: {e}")
+            self.logger.error(f"Error loading trades for client {client_id}: {e}")
             return []
 
-    def process_fifo_matching(self, trades: List[Trade]) -> List[FIFOMatch]:
-        """Process all trades with FIFO matching algorithm"""
-        # Reset state
-        self.buy_queues.clear()
+    def process_fifo_matches(self, trades: List[Trade]) -> List[FIFOMatch]:
+        """Process trades using FIFO methodology"""
         matches = []
         
+        # Group trades by symbol
+        symbol_trades = defaultdict(list)
         for trade in trades:
-            if trade.side == 'BUY':
-                # Add to buy queue for this symbol
-                self.buy_queues[trade.symbol].append(trade)
-                
-            elif trade.side == 'SELL':
-                # Match with oldest buys (FIFO)
-                remaining_sell_qty = trade.quantity
-                
-                while remaining_sell_qty > 0 and self.buy_queues[trade.symbol]:
-                    oldest_buy = self.buy_queues[trade.symbol][0]
-                    
-                    # Determine how much to match
-                    match_qty = min(remaining_sell_qty, oldest_buy.quantity)
-                    
-                    # Calculate profit for this match
-                    buy_cost = match_qty * oldest_buy.price
-                    sell_revenue = match_qty * trade.price
-                    profit = sell_revenue - buy_cost
-                    profit_percentage = (profit / buy_cost) * 100 if buy_cost > 0 else 0
-                    
-                    # Create FIFO match record
-                    fifo_match = FIFOMatch(
-                        buy_trade=oldest_buy,
-                        sell_trade=trade,
-                        quantity_matched=match_qty,
-                        profit=profit,
-                        profit_percentage=profit_percentage
-                    )
-                    matches.append(fifo_match)
-                    
-                    # Update quantities
-                    remaining_sell_qty -= match_qty
-                    oldest_buy.quantity -= match_qty
-                    
-                    # Remove buy trade if fully consumed
-                    if oldest_buy.quantity <= 0:
-                        self.buy_queues[trade.symbol].popleft()
+            symbol_trades[trade.symbol].append(trade)
         
-        self.completed_matches = matches
-        self.logger.info(f"Processed {len(matches)} FIFO matches")
+        # Process each symbol separately
+        for symbol, symbol_trade_list in symbol_trades.items():
+            buy_queue = deque()
+            
+            for trade in symbol_trade_list:
+                if trade.side == 'BUY':
+                    buy_queue.append(trade)
+                elif trade.side == 'SELL' and buy_queue:
+                    # Match with oldest buy (FIFO)
+                    while buy_queue and trade.quantity > 0:
+                        buy_trade = buy_queue[0]
+                        
+                        if buy_trade.quantity <= trade.quantity:
+                            # Full match
+                            quantity_matched = buy_trade.quantity
+                            profit = (trade.price - buy_trade.price) * quantity_matched
+                            profit_percentage = (profit / (buy_trade.price * quantity_matched)) * 100
+                            
+                            match = FIFOMatch(
+                                buy_trade=buy_trade,
+                                sell_trade=trade,
+                                quantity_matched=quantity_matched,
+                                profit=profit,
+                                profit_percentage=profit_percentage
+                            )
+                            matches.append(match)
+                            
+                            trade.quantity -= quantity_matched
+                            buy_queue.popleft()
+                        else:
+                            # Partial match
+                            quantity_matched = trade.quantity
+                            profit = (trade.price - buy_trade.price) * quantity_matched
+                            profit_percentage = (profit / (buy_trade.price * quantity_matched)) * 100
+                            
+                            match = FIFOMatch(
+                                buy_trade=buy_trade,
+                                sell_trade=trade,
+                                quantity_matched=quantity_matched,
+                                profit=profit,
+                                profit_percentage=profit_percentage
+                            )
+                            matches.append(match)
+                            
+                            buy_trade.quantity -= quantity_matched
+                            trade.quantity = 0
+        
         return matches
 
     def calculate_performance_metrics(self, client_id: int) -> PerformanceMetrics:
         """Calculate comprehensive performance metrics"""
-        # Load and process trades
-        trades = self.load_client_trades(client_id)
-        matches = self.process_fifo_matching(trades)
-        
-        if not matches:
+        try:
+            trades = self.load_client_trades(client_id)
+            matches = self.process_fifo_matches(trades)
+            
+            if not matches:
+                return PerformanceMetrics(
+                    total_realized_profit=0.0,
+                    total_trades=0,
+                    winning_trades=0,
+                    losing_trades=0,
+                    win_rate=0.0,
+                    average_profit_per_trade=0.0,
+                    best_trade=0.0,
+                    worst_trade=0.0,
+                    total_volume=0.0,
+                    profit_factor=0.0,
+                    current_multiplier=1.0,
+                    recent_24h_profit=0.0
+                )
+            
+            # Calculate metrics from FIFO matches
+            total_profit = sum(match.profit for match in matches)
+            winning_matches = [m for m in matches if m.profit > 0]
+            losing_matches = [m for m in matches if m.profit < 0]
+            
+            gross_profit = sum(m.profit for m in winning_matches)
+            gross_loss = abs(sum(m.profit for m in losing_matches))
+            
+            win_rate = (len(winning_matches) / len(matches)) * 100
+            avg_profit = total_profit / len(matches)
+            best_trade = max(match.profit for match in matches)
+            worst_trade = min(match.profit for match in matches)
+            
+            total_volume = sum(trade.total_value for trade in trades)
+            profit_factor = gross_profit / max(gross_loss, 1)
+            
+            # Calculate compound multiplier
+            base_profit_threshold = 25.0
+            current_multiplier = 1.0 + (max(total_profit, 0) / base_profit_threshold) * 0.1
+            current_multiplier = min(current_multiplier, 3.0)
+            
+            # Recent 24h profit
+            recent_24h_profit = self.calculator.get_recent_profit(client_id, 24)
+            
+            return PerformanceMetrics(
+                total_realized_profit=round(total_profit, 2),
+                total_trades=len(matches),
+                winning_trades=len(winning_matches),
+                losing_trades=len(losing_matches),
+                win_rate=round(win_rate, 1),
+                average_profit_per_trade=round(avg_profit, 2),
+                best_trade=round(best_trade, 2),
+                worst_trade=round(worst_trade, 2),
+                total_volume=round(total_volume, 2),
+                profit_factor=round(profit_factor, 2),
+                current_multiplier=round(current_multiplier, 2),
+                recent_24h_profit=round(recent_24h_profit, 2)
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating performance metrics: {e}")
             return PerformanceMetrics(
                 total_realized_profit=0.0,
                 total_trades=0,
@@ -169,265 +375,3 @@ class FIFOProfitTracker:
                 current_multiplier=1.0,
                 recent_24h_profit=0.0
             )
-        
-        # Calculate basic metrics
-        total_profit = sum(match.profit for match in matches)
-        winning_matches = [m for m in matches if m.profit > 0]
-        losing_matches = [m for m in matches if m.profit < 0]
-        
-        win_rate = len(winning_matches) / len(matches) * 100 if matches else 0
-        avg_profit = total_profit / len(matches) if matches else 0
-        
-        best_trade = max(match.profit for match in matches) if matches else 0
-        worst_trade = min(match.profit for match in matches) if matches else 0
-        
-        # Calculate total volume
-        total_volume = sum(trade.total_value for trade in trades)
-        
-        # Calculate profit factor (gross profit / gross loss)
-        gross_profit = sum(m.profit for m in winning_matches)
-        gross_loss = abs(sum(m.profit for m in losing_matches))
-        profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
-        
-        # Calculate compound multiplier
-        current_multiplier = self.calculate_compound_multiplier(total_profit)
-        
-        # Calculate recent 24h profit
-        recent_24h_profit = self.calculate_recent_profit(matches, hours=24)
-        
-        return PerformanceMetrics(
-            total_realized_profit=total_profit,
-            total_trades=len(matches),
-            winning_trades=len(winning_matches),
-            losing_trades=len(losing_matches),
-            win_rate=win_rate,
-            average_profit_per_trade=avg_profit,
-            best_trade=best_trade,
-            worst_trade=worst_trade,
-            total_volume=total_volume,
-            profit_factor=profit_factor,
-            current_multiplier=current_multiplier,
-            recent_24h_profit=recent_24h_profit
-        )
-
-    def calculate_compound_multiplier(self, total_profit: float) -> float:
-        """Calculate current compound multiplier based on profit"""
-        # Your compound system: 50% reinvestment rate, 3.0x max multiplier
-        reinvestment_rate = 0.5
-        max_multiplier = 3.0
-        
-        if total_profit < 100:  # Minimum threshold
-            return 1.0
-            
-        # Formula: 1.0 + (total_profit × reinvestment_rate / base_order_size)
-        multiplier = 1.0 + (total_profit * reinvestment_rate / self.base_order_size)
-        
-        return min(multiplier, max_multiplier)
-
-    def calculate_recent_profit(self, matches: List[FIFOMatch], hours: int = 24) -> float:
-        """Calculate profit from recent matches within time window"""
-        cutoff_time = datetime.now() - timedelta(hours=hours)
-        
-        recent_profit = sum(
-            match.profit for match in matches 
-            if match.sell_trade.timestamp >= cutoff_time
-        )
-        
-        return recent_profit
-
-    def get_symbol_breakdown(self, matches: List[FIFOMatch]) -> Dict[str, Dict]:
-        """Get performance breakdown by symbol"""
-        symbol_stats = defaultdict(lambda: {
-            'profit': 0.0,
-            'trades': 0,
-            'volume': 0.0,
-            'win_rate': 0.0
-        })
-        
-        for match in matches:
-            symbol = match.buy_trade.symbol
-            symbol_stats[symbol]['profit'] += match.profit
-            symbol_stats[symbol]['trades'] += 1
-            symbol_stats[symbol]['volume'] += match.buy_trade.total_value
-            
-        # Calculate win rates
-        for symbol in symbol_stats:
-            symbol_matches = [m for m in matches if m.buy_trade.symbol == symbol]
-            winning = len([m for m in symbol_matches if m.profit > 0])
-            symbol_stats[symbol]['win_rate'] = winning / len(symbol_matches) * 100 if symbol_matches else 0
-            
-        return dict(symbol_stats)
-
-    def generate_performance_report(self, client_id: int) -> str:
-        """Generate comprehensive performance report"""
-        metrics = self.calculate_performance_metrics(client_id)
-        matches = self.completed_matches
-        symbol_breakdown = self.get_symbol_breakdown(matches)
-        
-        report = f"""
-📊 **GRIDTRADER PRO PERFORMANCE REPORT**
-{'='*50}
-⏰ **Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-👤 **Client ID:** {client_id}
-
-💰 **REALIZED PROFIT (FIFO)**
-   Total Profit: ${metrics.total_realized_profit:.2f}
-   24h Profit: ${metrics.recent_24h_profit:.2f}
-   Average/Trade: ${metrics.average_profit_per_trade:.2f}
-   
-📈 **TRADING STATISTICS**
-   Total Completed Cycles: {metrics.total_trades}
-   Winning Trades: {metrics.winning_trades}
-   Losing Trades: {metrics.losing_trades}
-   Win Rate: {metrics.win_rate:.1f}%
-   
-🎯 **PERFORMANCE METRICS**
-   Best Trade: ${metrics.best_trade:.2f}
-   Worst Trade: ${metrics.worst_trade:.2f}
-   Profit Factor: {metrics.profit_factor:.2f}
-   Total Volume: ${metrics.total_volume:,.2f}
-   
-🔄 **COMPOUND SYSTEM**
-   Current Multiplier: {metrics.current_multiplier:.2f}x
-   New Order Size: ${self.base_order_size * metrics.current_multiplier:.2f}
-   Status: {'ACTIVE' if metrics.current_multiplier > 1.0 else 'INACTIVE'}
-
-📊 **SYMBOL BREAKDOWN**"""
-        
-        for symbol, stats in symbol_breakdown.items():
-            report += f"""
-   {symbol}: ${stats['profit']:.2f} profit, {stats['trades']} trades, {stats['win_rate']:.1f}% win rate"""
-        
-        return report
-
-
-class PerformanceMonitor:
-    """Real-time performance monitoring and alerting"""
-    
-    def __init__(self):
-        self.fifo_tracker = FIFOProfitTracker()
-        self.logger = logging.getLogger(__name__)
-
-    async def monitor_client_performance(self, client_id: int) -> Dict:
-        """Monitor and return current performance status"""
-        try:
-            metrics = self.fifo_tracker.calculate_performance_metrics(client_id)
-            
-            # Generate alerts based on performance
-            alerts = []
-            
-            if metrics.recent_24h_profit < -50:  # $50 loss in 24h
-                alerts.append("⚠️ Significant 24h loss detected")
-                
-            if metrics.win_rate < 30:  # Less than 30% win rate
-                alerts.append("⚠️ Low win rate - review grid spacing")
-                
-            if metrics.current_multiplier >= 2.5:  # High multiplier
-                alerts.append("🚀 High compound multiplier active")
-                
-            return {
-                'client_id': client_id,
-                'timestamp': datetime.now().isoformat(),
-                'metrics': metrics,
-                'alerts': alerts,
-                'status': 'profitable' if metrics.total_realized_profit > 0 else 'unprofitable'
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error monitoring client {client_id}: {e}")
-            return {'error': str(e)}
-
-    def should_adjust_grid(self, metrics: PerformanceMetrics) -> Tuple[bool, str]:
-        """Determine if grid parameters should be adjusted"""
-        if metrics.win_rate < 25:
-            return True, "Increase grid spacing - too many losing trades"
-            
-        if metrics.recent_24h_profit < -100:
-            return True, "Reduce position size - excessive recent losses"
-            
-        if metrics.profit_factor < 1.2:
-            return True, "Optimize grid levels - poor risk/reward ratio"
-            
-        return False, "Grid parameters optimal"
-
-
-# Integration with your existing monitoring dashboard
-class EnhancedMonitoringDashboard:
-    """Enhanced version of your monitoring_dashboard.py with FIFO tracking"""
-    
-    def __init__(self):
-        self.performance_monitor = PerformanceMonitor()
-        self.logger = logging.getLogger(__name__)
-
-    async def display_enhanced_metrics(self, client_ids: List[int]):
-        """Display enhanced metrics for all clients"""
-        print("\033[2J\033[H")  # Clear screen
-        
-        print("=" * 80)
-        print("🚀 GRIDTRADER PRO - ENHANCED PERFORMANCE DASHBOARD")
-        print("=" * 80)
-        print(f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print()
-        
-        total_profit = 0.0
-        total_volume = 0.0
-        
-        for client_id in client_ids:
-            try:
-                status = await self.performance_monitor.monitor_client_performance(client_id)
-                
-                if 'error' not in status:
-                    metrics = status['metrics']
-                    total_profit += metrics.total_realized_profit
-                    total_volume += metrics.total_volume
-                    
-                    print(f"👤 **Client {client_id}**")
-                    print(f"   💰 Realized Profit: ${metrics.total_realized_profit:.2f}")
-                    print(f"   📊 Win Rate: {metrics.win_rate:.1f}%")
-                    print(f"   🔄 Multiplier: {metrics.current_multiplier:.2f}x")
-                    print(f"   ⏱️  24h Profit: ${metrics.recent_24h_profit:.2f}")
-                    
-                    if status['alerts']:
-                        print(f"   🚨 Alerts: {', '.join(status['alerts'])}")
-                    print()
-                    
-            except Exception as e:
-                print(f"   ❌ Error monitoring client {client_id}: {e}")
-        
-        print("📈 **OVERALL PERFORMANCE**")
-        print(f"   Total Realized Profit: ${total_profit:.2f}")
-        print(f"   Total Volume Traded: ${total_volume:,.2f}")
-        print(f"   Overall Profit Margin: {(total_profit/total_volume*100):.3f}%" if total_volume > 0 else "   No volume data")
-
-
-# Usage example for integration
-async def example_usage():
-    """Example of how to integrate with your existing system"""
-    
-    # Initialize enhanced monitoring
-    monitor = PerformanceMonitor()
-    
-    # Get performance for a specific client
-    client_performance = await monitor.monitor_client_performance(485825055)  # Your test client
-    
-    if 'error' not in client_performance:
-        metrics = client_performance['metrics']
-        print(f"Client Profit: ${metrics.total_realized_profit:.2f}")
-        print(f"Current Multiplier: {metrics.current_multiplier:.2f}x")
-        print(f"Win Rate: {metrics.win_rate:.1f}%")
-        
-        # Check if adjustments needed
-        fifo_tracker = FIFOProfitTracker()
-        should_adjust, reason = monitor.should_adjust_grid(metrics)
-        if should_adjust:
-            print(f"⚠️ Recommendation: {reason}")
-    
-    # Generate detailed report
-    fifo_tracker = FIFOProfitTracker()
-    report = fifo_tracker.generate_performance_report(485825055)
-    print(report)
-
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(example_usage())

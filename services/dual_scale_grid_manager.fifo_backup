@@ -15,16 +15,6 @@ from repositories.trade_repository import TradeRepository
 from services.market_analysis import MarketAnalysisService, MarketCondition
 
 
-def notify_fifo(self):
-    """Helper to notify FIFO orchestrator (currently logs a message)."""
-    try:
-        if hasattr(self, "client_id") and hasattr(self, "logger"):
-            self.logger.info(f"📊 FIFO: Should log trade for client {self.client_id}")
-    except Exception as e:
-        if hasattr(self, "logger"):
-            self.logger.warning(f"FIFO logging failed: {e}")
-
-
 class DualScaleGridManager:
     """Smart 35/65 dual-scale grid system - FIXED ALL BINANCE API ISSUES"""
 
@@ -581,16 +571,6 @@ class DualScaleGridManager:
                     )
 
                     if order and order.get("status") in ["NEW", "PARTIALLY_FILLED"]:
-                        # FIFO Integration - Notify Enhanced Grid Orchestrator
-                        try:
-                            if hasattr(self, "client_id") and hasattr(self, "logger"):
-                                # This would ideally call the orchestrator's FIFO method
-                                # For now, just log that we should notify FIFO
-                                self.logger.info(
-                                    f"📊 FIFO: Should log trade for client {self.client_id}"
-                                )
-                        except Exception as e:
-                            self.logger.warning(f"FIFO logging failed: {e}")
                         level["order_id"] = order["orderId"]
                         orders_placed += 1
                         available_usdt -= notional_value
@@ -711,16 +691,6 @@ class DualScaleGridManager:
                     )
 
                     if order and order.get("status") in ["NEW", "PARTIALLY_FILLED"]:
-                        # FIFO Integration - Notify Enhanced Grid Orchestrator
-                        try:
-                            if hasattr(self, "client_id") and hasattr(self, "logger"):
-                                # This would ideally call the orchestrator's FIFO method
-                                # For now, just log that we should notify FIFO
-                                self.logger.info(
-                                    f"📊 FIFO: Should log trade for client {self.client_id}"
-                                )
-                        except Exception as e:
-                            self.logger.warning(f"FIFO logging failed: {e}")
                         level["order_id"] = order["orderId"]
                         orders_placed += 1
                         available_base -= required_quantity
@@ -799,29 +769,7 @@ class DualScaleGridManager:
                 adaptive_config = self.active_grids[symbol]
 
                 # Check for filled orders on both grids
-
-                # FIFO Integration - Notify Enhanced Grid Orchestrator
-                try:
-                    if hasattr(self, "client_id") and hasattr(self, "logger"):
-                        # This would ideally call the orchestrator's FIFO method
-                        # For now, just log that we should notify FIFO
-                        self.logger.info(
-                            f"📊 FIFO: Should log trade for client {self.client_id}"
-                        )
-                except Exception as e:
-                    self.logger.warning(f"FIFO logging failed: {e}")
                 await self._check_filled_orders_dual_scale(adaptive_config)
-
-                # FIFO Integration - Notify Enhanced Grid Orchestrator
-                try:
-                    if hasattr(self, "client_id") and hasattr(self, "logger"):
-                        # This would ideally call the orchestrator's FIFO method
-                        # For now, just log that we should notify FIFO
-                        self.logger.info(
-                            f"📊 FIFO: Should log trade for client {self.client_id}"
-                        )
-                except Exception as e:
-                    self.logger.warning(f"FIFO logging failed: {e}")
 
                 # Check for balance expansion opportunities
                 await self._check_balance_expansion_dual_scale(adaptive_config)
@@ -842,17 +790,19 @@ class DualScaleGridManager:
         self, adaptive_config: AdaptiveGridConfig
     ) -> None:
         """Check filled orders on both base and enhanced grids with FIXED API calls"""
-        self.notify_fifo()
-
         try:
             symbol = adaptive_config.symbol
+
+            # FIXED: Get current open orders with proper timestamp handling
             open_orders = self._safe_binance_call("get_open_orders", symbol=symbol)
             open_order_ids = {order["orderId"] for order in open_orders}
 
+            # Check base grid (35% allocation)
             await self._process_filled_orders_with_replacement(
                 adaptive_config.base_grid, open_order_ids, "BASE_GRID", adaptive_config
             )
 
+            # Check enhanced grid (65% allocation)
             if adaptive_config.enhanced_grid_active:
                 await self._process_filled_orders_with_replacement(
                     adaptive_config.enhanced_grid,
@@ -863,7 +813,6 @@ class DualScaleGridManager:
 
         except Exception as e:
             self.logger.error(f"❌ Dual-scale filled orders check error: {e}")
-            self.notify_fifo()
 
     async def _process_filled_orders_with_replacement(
         self,
@@ -873,11 +822,10 @@ class DualScaleGridManager:
         adaptive_config: AdaptiveGridConfig,
     ) -> None:
         """Process filled orders and replace them intelligently"""
-        self.notify_fifo()
-
         try:
             filled_orders = []
 
+            # Check buy levels
             for level in grid_config.buy_levels:
                 if (
                     level["order_id"]
@@ -887,6 +835,7 @@ class DualScaleGridManager:
                     level["filled"] = True
                     filled_orders.append(("BUY", level))
 
+            # Check sell levels
             for level in grid_config.sell_levels:
                 if (
                     level["order_id"]
@@ -896,9 +845,9 @@ class DualScaleGridManager:
                     level["filled"] = True
                     filled_orders.append(("SELL", level))
 
+            # Process filled orders
             for side, level in filled_orders:
-                self.notify_fifo()
-
+                # Log trade execution
                 self.trade_repo.log_trade_execution(
                     client_id=self.client_id,
                     symbol=grid_config.symbol,
@@ -908,12 +857,14 @@ class DualScaleGridManager:
                     order_id=level["order_id"],
                 )
 
+                # Update performance metrics
                 self.performance_metrics["total_trades"] += 1
                 if grid_type == "BASE_GRID":
                     self.performance_metrics["base_grid_trades"] += 1
                 else:
                     self.performance_metrics["enhanced_grid_trades"] += 1
 
+                # Calculate profit for sell orders
                 if side == "SELL":
                     estimated_profit = (
                         level["price"]
@@ -927,13 +878,13 @@ class DualScaleGridManager:
                     f"💰 {grid_type} {side} filled: {level['quantity']} at ${level['price']:.4f}"
                 )
 
+                # Replace the filled order
                 await self._replace_filled_order_dual_scale(
                     grid_config, side, level, grid_type, adaptive_config
                 )
 
         except Exception as e:
             self.logger.error(f"❌ Process filled orders error for {grid_type}: {e}")
-            self.notify_fifo()
 
     async def _replace_filled_order_dual_scale(
         self,
@@ -944,37 +895,42 @@ class DualScaleGridManager:
         adaptive_config: AdaptiveGridConfig,
     ) -> None:
         """Replace filled order with intelligent dual-scale logic and FIXED API calls"""
-        self.notify_fifo()
-
         try:
+            # FIXED: Get current price with proper timestamp handling
             ticker = self._safe_binance_call(
                 "get_symbol_ticker", symbol=grid_config.symbol
             )
             current_price = float(ticker["price"])
 
+            # Determine replacement strategy based on grid type and market conditions
             if side == "BUY":
+                # Buy filled, place new sell order
                 new_side = "SELL"
                 if grid_type == "BASE_GRID":
+                    # Conservative replacement
                     new_price = current_price * (1 + grid_config.grid_spacing * 1.5)
                 else:
+                    # Aggressive replacement with market adaptation
                     market_score = adaptive_config.market_condition.get("score", 0.5)
-                    new_price = current_price * (
-                        1
-                        + grid_config.grid_spacing
-                        * (1.2 if market_score > 0.6 else 1.8)
-                    )
+                    if market_score > 0.6:  # Bullish market
+                        new_price = current_price * (1 + grid_config.grid_spacing * 1.2)
+                    else:
+                        new_price = current_price * (1 + grid_config.grid_spacing * 1.8)
             else:
+                # Sell filled, place new buy order
                 new_side = "BUY"
                 if grid_type == "BASE_GRID":
+                    # Conservative replacement
                     new_price = current_price * (1 - grid_config.grid_spacing * 1.5)
                 else:
+                    # Aggressive replacement with market adaptation
                     market_score = adaptive_config.market_condition.get("score", 0.5)
-                    new_price = current_price * (
-                        1
-                        - grid_config.grid_spacing
-                        * (1.2 if market_score < 0.4 else 1.8)
-                    )
+                    if market_score < 0.4:  # Bearish market
+                        new_price = current_price * (1 - grid_config.grid_spacing * 1.2)
+                    else:
+                        new_price = current_price * (1 - grid_config.grid_spacing * 1.8)
 
+            # FIXED: Get symbol info for formatting with proper timestamp handling
             exchange_info = self._safe_binance_call("get_exchange_info")
             symbol_info = next(
                 (
@@ -986,49 +942,60 @@ class DualScaleGridManager:
             )
             filters = {f["filterType"]: f for f in symbol_info["filters"]}
 
-            new_quantity = level["quantity"]
+            # Calculate new quantity maintaining the same USD value
+            new_quantity = level["quantity"]  # Keep same quantity for consistency
+
+            # Format order parameters
             formatted_price, formatted_quantity = self._format_order_params(
                 new_price, new_quantity, filters
             )
 
-            if new_side == "BUY":
-                order = self._safe_binance_call(
-                    "order_limit_buy",
-                    symbol=grid_config.symbol,
-                    quantity=formatted_quantity,
-                    price=formatted_price,
-                )
-            else:
-                order = self._safe_binance_call(
-                    "order_limit_sell",
-                    symbol=grid_config.symbol,
-                    quantity=formatted_quantity,
-                    price=formatted_price,
-                )
+            # FIXED: Place replacement order with proper timestamp handling
+            try:
+                if new_side == "BUY":
+                    order = self._safe_binance_call(
+                        "order_limit_buy",
+                        symbol=grid_config.symbol,
+                        quantity=formatted_quantity,
+                        price=formatted_price,
+                    )
+                else:
+                    order = self._safe_binance_call(
+                        "order_limit_sell",
+                        symbol=grid_config.symbol,
+                        quantity=formatted_quantity,
+                        price=formatted_price,
+                    )
 
-            if order and order.get("status") in ["NEW", "PARTIALLY_FILLED"]:
-                level["price"] = new_price
-                level["quantity"] = float(formatted_quantity)
-                level["order_id"] = order["orderId"]
-                level["filled"] = False
+                if order and order.get("status") in ["NEW", "PARTIALLY_FILLED"]:
+                    # Update level with new order info
+                    level["price"] = new_price
+                    level["quantity"] = float(formatted_quantity)
+                    level["order_id"] = order["orderId"]
+                    level["filled"] = False
 
-                self.trade_repo.log_grid_order(
-                    client_id=self.client_id,
-                    symbol=grid_config.symbol,
-                    side=new_side,
-                    quantity=float(formatted_quantity),
-                    price=new_price,
-                    order_id=order["orderId"],
-                    grid_level=level["level"],
-                )
+                    # Log new order
+                    self.trade_repo.log_grid_order(
+                        client_id=self.client_id,
+                        symbol=grid_config.symbol,
+                        side=new_side,
+                        quantity=float(formatted_quantity),
+                        price=new_price,
+                        order_id=order["orderId"],
+                        grid_level=level["level"],
+                    )
 
-                self.logger.info(
-                    f"🔄 {grid_type} replacement: {new_side} {formatted_quantity} at {formatted_price}"
+                    self.logger.info(
+                        f"🔄 {grid_type} replacement: {new_side} {formatted_quantity} at {formatted_price}"
+                    )
+
+            except Exception as e:
+                self.logger.warning(
+                    f"❌ Failed to place {grid_type} replacement order: {e}"
                 )
 
         except Exception as e:
             self.logger.error(f"❌ Replace filled order error: {e}")
-            self.notify_fifo()
 
     async def _check_balance_expansion_dual_scale(
         self, adaptive_config: AdaptiveGridConfig
