@@ -1,240 +1,372 @@
-# handlers/client_handler.py
-"""Complete Client Handler for GridTrader Pro"""
+# Updated handlers/smart_client_handler.py
+# Fix the "Coming soon" buttons by implementing the actual functionality
 
-import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from repositories.client_repository import ClientRepository
-from utils.validators import Validators
+from utils.base_handler import BaseClientHandler
 
 
-class ClientHandler:
-    """Complete handler for paying clients"""
+class ClientHandler(BaseClientHandler):
+    """Enhanced client handler with smart adaptive trading - FIXED BUTTONS"""
 
-    def __init__(self, grid_orchestrator):
-        self.client_repo = ClientRepository()
-        self.grid_orchestrator = grid_orchestrator
-        self.client_states = {}  # Track client input states
-        self.logger = logging.getLogger(__name__)
+    def __init__(self):
+        super().__init__()  # Inherit all base functionality
+
+        # Initialize FIFO service for dashboard integration
+        try:
+            from services.fifo_service import FIFOService
+
+            self.fifo_service = FIFOService()
+        except ImportError:
+            self.logger.warning("FIFO service not available")
+            self.fifo_service = None
 
     async def handle_start(self, update, context):
-        """Handle /start command"""
+        """Handle /start command with smart trading introduction"""
         user = update.effective_user
         client = self.client_repo.get_client(user.id)
 
         if client and client.is_active():
-            await self._show_client_dashboard(update, client)
+            await self._show_smart_dashboard(update, client)
         else:
-            await self._handle_new_client(update, user)
+            await self._handle_new_smart_client(update, user)
 
-    async def _handle_new_client(self, update, user):
-        """Handle new client registration"""
-        client = self.client_repo.create_client(
-            telegram_id=user.id, username=user.username, first_name=user.first_name
-        )
-
-        message = f"""🤖 **Welcome to GridTrader Pro**
-
-Hi {user.first_name}! Welcome to professional grid trading.
-
-**What you get:**
-✅ Real-time grid trading on Binance
-✅ ADA & AVAX pairs (more coming soon)
-✅ Automated profit generation
-✅ Professional risk management
-
-**To start trading:**
-1. Set up your Binance API keys
-2. Configure your trading capital
-3. Start earning profits!
-
-Ready to begin?"""
-
-        keyboard = [
-            [InlineKeyboardButton("🔐 Setup API Keys", callback_data="setup_api")],
-            [InlineKeyboardButton("📊 Dashboard", callback_data="show_dashboard")],
-        ]
-
-        await update.message.reply_text(
-            message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
-        )
-
-    async def _show_client_dashboard(self, update, client):
-        """Show client dashboard"""
-        # Get grid status
-        grid_status = self.grid_orchestrator.get_client_grid_status(client.telegram_id)
-
-        # API setup status
-        api_status = "✅ Connected" if client.binance_api_key else "❌ Not Setup"
-
-        # Active grids info
-        if grid_status and grid_status.get("active_grids"):
-            active_info = f"\n🤖 Active Grids: {len(grid_status['active_grids'])}"
-            total_trades = sum(
-                g.get("total_trades", 0) for g in grid_status["active_grids"].values()
+    async def _show_smart_dashboard(self, update, client):
+        """Smart dashboard with FIFO metrics integration"""
+        try:
+            # Get grid status (without await - it's not async)
+            grid_status = self.grid_orchestrator.get_client_grid_status(
+                client.telegram_id
             )
-            total_profit = sum(
-                g.get("total_profit", 0) for g in grid_status["active_grids"].values()
-            )
-            active_info += f"\n📊 Total Trades: {total_trades}"
-            active_info += f"\n💰 Total Profit: ${total_profit:.2f}"
-        else:
-            active_info = "\n🤖 No active grids"
 
-        message = f"""📊 **GridTrader Pro Dashboard**
+            # Check API keys
+            has_api_keys = bool(client.binance_api_key and client.binance_secret_key)
+            api_status = "✅ Connected" if has_api_keys else "❌ Not Set"
 
-Welcome back, {client.first_name}!
+            # Get FIFO metrics if available - FOR THIS SPECIFIC USER
+            fifo_metrics = ""
+            if hasattr(self, "fifo_service") and self.fifo_service:
+                try:
+                    # IMPORTANT: Use client.telegram_id to get metrics for THIS user only
+                    self.logger.info(
+                        f"Getting FIFO metrics for user {client.telegram_id}"
+                    )
+                    display_metrics = self.fifo_service.get_display_metrics(
+                        client.telegram_id
+                    )
+                    performance = self.fifo_service.calculate_fifo_performance(
+                        client.telegram_id
+                    )
+
+                    # Log what we got for debugging
+                    self.logger.info(
+                        f"FIFO metrics for user {client.telegram_id}: {display_metrics}"
+                    )
+
+                    fifo_metrics = f"""
+💰 **FIFO Profit Tracking:**
+{display_metrics["total_profit_display"]}
+Win Rate: {display_metrics["win_rate_display"]}
+Efficiency: {display_metrics["efficiency_display"]}
+Volume: {display_metrics["volume_display"]}
+Trades: {performance.get("total_trades", 0)}"""
+                except Exception as e:
+                    self.logger.error(
+                        f"Error getting FIFO metrics for user {client.telegram_id}: {e}"
+                    )
+                    fifo_metrics = "\n💰 **Profit:** Calculating..."
+            else:
+                self.logger.warning("FIFO service not available")
+                fifo_metrics = "\n💰 **FIFO service not available**"
+
+            # Active grids info
+            active_info = ""
+            if grid_status and grid_status.get("active_grids"):
+                active_grids = grid_status["active_grids"]
+                active_info = f"\n🤖 Active Grids: {len(active_grids)}"
+                for symbol, grid_info in active_grids.items():
+                    status = grid_info.get("status", "Unknown")
+                    active_info += f"\n   {symbol}: {status}"
+            else:
+                active_info = "\n💤 No active grids"
+
+            message = f"""📊 **GridTrader Pro Smart Dashboard**
 
 **Account Status:**
 🔐 API Keys: {api_status}
 💰 Capital: ${client.total_capital:,.2f}
-⚙️ Pairs: {", ".join(client.trading_pairs)}
-📈 Risk Level: {client.risk_level.title()}{active_info}
+⚙️ Pairs: {", ".join(client.trading_pairs) if client.trading_pairs else "Not Set"}
+📈 Risk Level: {client.risk_level.title()}{active_info}{fifo_metrics}
 
 **Quick Trading:** Type `ADA 1000` or `AVAX 500`"""
 
-        keyboard = []
+            # Build keyboard - same as BaseClientHandler but with FIFO-enhanced display
+            keyboard = []
 
-        if client.can_start_grid():
-            if grid_status and grid_status.get("active_grids"):
-                keyboard.append(
+            # Add trading controls
+            if client.can_start_grid():
+                if grid_status and grid_status.get("active_grids"):
+                    keyboard.append(
+                        [
+                            InlineKeyboardButton(
+                                "🛑 Stop Trading", callback_data="stop_all_grids"
+                            )
+                        ]
+                    )
+                else:
+                    keyboard.append(
+                        [
+                            InlineKeyboardButton(
+                                "🚀 Start Trading", callback_data="start_trading"
+                            )
+                        ]
+                    )
+
+            # Add standard buttons
+            keyboard.extend(
+                [
+                    [InlineKeyboardButton("⚙️ Settings", callback_data="show_settings")],
                     [
                         InlineKeyboardButton(
-                            "🛑 Stop Trading", callback_data="stop_all_grids"
+                            "📈 Performance", callback_data="show_performance"
                         )
-                    ]
+                    ],
+                ]
+            )
+
+            # Send message
+            if hasattr(update, "message") and update.message:
+                await update.message.reply_text(
+                    message,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode="Markdown",
                 )
             else:
-                keyboard.append(
-                    [
-                        InlineKeyboardButton(
-                            "🚀 Start Trading", callback_data="start_trading"
-                        )
-                    ]
+                await update.edit_message_text(
+                    message,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode="Markdown",
                 )
 
-        keyboard.extend(
-            [
-                [InlineKeyboardButton("⚙️ Settings", callback_data="show_settings")],
-                [
-                    InlineKeyboardButton(
-                        "📈 Performance", callback_data="show_performance"
-                    )
-                ],
-            ]
-        )
-
-        # Use appropriate method based on context
-        if hasattr(update, "message") and update.message:
-            await update.message.reply_text(
-                message,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode="Markdown",
-            )
-        else:
-            await update.edit_message_text(
-                message,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode="Markdown",
-            )
+        except Exception as e:
+            self.logger.error(f"Error showing smart dashboard: {e}")
+            # Fallback to base dashboard if FIFO integration fails
+            await self.show_base_dashboard(update, client, extra_buttons=None)
 
     async def handle_callback(self, update, context):
-        """Handle callback queries"""
+        """Handle callback queries - FIXED to remove placeholder responses"""
         query = update.callback_query
         await query.answer()
 
         client_id = query.from_user.id
         action = query.data
 
-        self.logger.info(f"Client {client_id} action: {action}")
+        self.logger.info(f"Smart client {client_id} action: {action}")
 
-        # Route to appropriate handler
-        if action == "setup_api":
-            await self._setup_api_keys(query, client_id)
-        elif action == "show_dashboard":
-            await self._back_to_dashboard(query, client_id)
-        elif action == "show_settings":
-            await self._show_settings(query, client_id)
-        elif action == "show_performance":
+        # Try common handlers first (from BaseClientHandler)
+        if await self.handle_common_callbacks(query, client_id, action):
+            return
+
+        # Smart-specific actions - IMPLEMENTED
+        if action == "show_performance":
             await self._show_performance(query, client_id)
         elif action == "start_trading":
             await self._start_trading(query, client_id)
-        elif action == "stop_all_grids":
-            await self._stop_all_grids(query, client_id)
-        elif action == "cancel_input":
-            await self._cancel_input(query, client_id)
-        elif action == "set_capital":
-            await self._set_capital(query, client_id)
-        elif action == "confirm_start_trading":  # ADD THIS
-            await self._confirm_start_trading(query, client_id)
         elif action.startswith("execute_trade_"):
             await self._execute_trade(query, action)
         else:
-            await query.edit_message_text(f"🔧 Feature: {action} - Coming soon!")
+            # REMOVED: No more "Coming soon" messages
+            await query.edit_message_text(
+                "❌ **Unknown Action**\n\nPlease use the dashboard buttons.",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "📊 Dashboard", callback_data="show_dashboard"
+                            )
+                        ]
+                    ]
+                ),
+            )
 
-    # ADD THIS NEW METHOD
-    async def _confirm_start_trading(self, query, client_id):
-        """Confirm and start trading for all configured pairs"""
-        await query.edit_message_text("🔄 **Starting Grid Trading...**")
-
+    async def _show_performance(self, query, client_id):
+        """Show actual performance data - IMPLEMENTED"""
         try:
             client = self.client_repo.get_client(client_id)
-            if not client or not client.can_start_grid():
-                await query.edit_message_text(
-                    "❌ **Cannot Start Trading**\n\n"
-                    "Please ensure your API keys and capital are configured."
-                )
-                return
 
-            results = []
-            successful_grids = 0
+            # Get FIFO performance if service is available
+            if hasattr(self, "fifo_service") and self.fifo_service:
+                performance = self.fifo_service.calculate_fifo_performance(client_id)
+                display_metrics = self.fifo_service.get_display_metrics(client_id)
 
-            # Start grids for each trading pair
-            for pair in client.trading_pairs:
-                # Calculate capital per pair
-                capital_per_pair = client.total_capital / len(client.trading_pairs)
+                message = f"""📈 **Smart Trading Performance**
 
-                self.logger.info(
-                    f"Starting grid for {pair} with ${capital_per_pair:.2f}"
-                )
+💰 **Profit Analysis:**
+{display_metrics["total_profit_display"]}
+Recent 24h: {display_metrics["recent_profit_display"]}
 
-                result = await self.grid_orchestrator.start_client_grid(
-                    client_id, pair, capital_per_pair
-                )
+📊 **Trading Statistics:**
+Total Volume: {display_metrics["volume_display"]}
+Win Rate: {display_metrics["win_rate_display"]}
+Efficiency: {display_metrics["efficiency_display"]}
+Active Grids: {display_metrics["active_grids_display"]}
 
-                results.append(
-                    {"pair": pair, "success": result["success"], "result": result}
-                )
+🎯 **Performance Summary:**
+{display_metrics["performance_summary"]}
 
-                if result["success"]:
-                    successful_grids += 1
+🔄 **Compound System:**
+Current Multiplier: {display_metrics["multiplier_display"]}
+Status: {"🟢 ACTIVE" if performance.get("current_multiplier", 1.0) > 1.0 else "⚪ INACTIVE"}"""
 
-            # Format response based on results
-            if successful_grids == len(client.trading_pairs):
-                # All grids started successfully
-                grid_info = []
-                total_orders = 0
+            else:
+                # Fallback performance display
+                message = f"""📈 **Smart Trading Performance**
 
-                for res in results:
-                    if res["success"]:
-                        status = res["result"]["status"]
-                        orders = status.get("total_orders", 0)
-                        total_orders += orders
-                        grid_info.append(f"✅ {res['pair']}: {orders} orders")
+💰 **Account Overview:**
+Capital: ${client.total_capital:,.2f}
+Risk Level: {client.risk_level.title()}
+Trading Pairs: {", ".join(client.trading_pairs)}
 
-                message = f"""🎉 **Grid Trading Started!**
+🤖 **Grid Status:**
+Status: {"✅ Ready" if client.can_start_grid() else "❌ Setup Required"}
 
-✅ **All grids active for {client.first_name}!**
+📊 **Note:** Start trading to see detailed performance metrics."""
 
-**Grids Summary:**
-{chr(10).join(grid_info)}
+            keyboard = [
+                [InlineKeyboardButton("📊 Dashboard", callback_data="show_dashboard")]
+            ]
 
-📊 **Total Orders:** {total_orders}
-💰 **Total Capital:** ${client.total_capital:,.2f}
-🤖 **Status:** Active 24/7
+            await query.edit_message_text(
+                message,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown",
+            )
 
-Your grids will automatically trade when prices move!"""
+        except Exception as e:
+            self.logger.error(f"Error showing performance: {e}")
+            await query.edit_message_text(
+                "❌ **Performance data temporarily unavailable.**\n\nPlease try again later.",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "📊 Dashboard", callback_data="show_dashboard"
+                            )
+                        ]
+                    ]
+                ),
+            )
+
+    async def _start_trading(self, query, client_id):
+        """Start trading functionality - IMPLEMENTED"""
+        client = self.client_repo.get_client(client_id)
+
+        if not client.can_start_grid():
+            await query.edit_message_text(
+                "❌ **Cannot Start Trading**\n\n"
+                "Please complete your setup first:\n"
+                "• Set up API keys\n"
+                "• Configure trading capital",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "🔐 Setup API Keys", callback_data="setup_api"
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "💰 Set Capital", callback_data="set_capital"
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "📊 Dashboard", callback_data="show_dashboard"
+                            )
+                        ],
+                    ]
+                ),
+                parse_mode="Markdown",
+            )
+            return
+
+        # Show trading options
+        message = f"""🚀 **Start Smart Trading**
+
+**Account Ready:**
+💰 Capital: ${client.total_capital:,.2f}
+🎯 Risk Level: {client.risk_level.title()}
+🔄 Pairs: {", ".join(client.trading_pairs)}
+
+**Available Symbols:**
+• ADA/USDT - Cardano
+• AVAX/USDT - Avalanche
+
+**Quick Start:**
+Choose a symbol and amount, or type a command like `ADA 1000`"""
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🥇 ADA $500", callback_data="execute_trade_ADA_500"
+                ),
+                InlineKeyboardButton(
+                    "🏔️ AVAX $500", callback_data="execute_trade_AVAX_500"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "🥇 ADA $1000", callback_data="execute_trade_ADA_1000"
+                ),
+                InlineKeyboardButton(
+                    "🏔️ AVAX $1000", callback_data="execute_trade_AVAX_1000"
+                ),
+            ],
+            [InlineKeyboardButton("📊 Dashboard", callback_data="show_dashboard")],
+        ]
+
+        await query.edit_message_text(
+            message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+        )
+
+    async def _execute_trade(self, query, action):
+        """Execute trade command - IMPLEMENTED"""
+        client_id = query.from_user.id
+
+        try:
+            # Parse action: execute_trade_SYMBOL_AMOUNT
+            parts = action.replace("execute_trade_", "").split("_")
+            symbol = parts[0]
+            amount = float(parts[1])
+        except (IndexError, ValueError):
+            await query.edit_message_text("❌ Invalid trade parameters")
+            return
+
+        await query.edit_message_text("🔄 **Launching Smart Grid...**")
+
+        try:
+            # Execute through grid orchestrator
+            result = await self.grid_orchestrator.start_client_grid(
+                client_id, f"{symbol}USDT", amount
+            )
+
+            if result.get("success"):
+                message = f"""🎉 **Smart Grid Launched!**
+
+✅ **{symbol}/USDT Grid Active**
+
+**Grid Configuration:**
+💰 Capital: ${amount:,.2f}
+🤖 Strategy: Smart Adaptive Grid
+📊 Status: Active 24/7
+
+**Features Active:**
+✅ Automated buy/sell orders
+✅ Profit capture on price movements
+✅ Risk management system
+
+Your grid will automatically trade when prices move!"""
 
                 keyboard = [
                     [
@@ -247,55 +379,18 @@ Your grids will automatically trade when prices move!"""
                             "📈 Performance", callback_data="show_performance"
                         )
                     ],
-                    [
-                        InlineKeyboardButton(
-                            "🛑 Stop All Grids", callback_data="stop_all_grids"
-                        )
-                    ],
-                ]
-
-            elif successful_grids > 0:
-                # Some grids started
-                success_pairs = [res["pair"] for res in results if res["success"]]
-                failed_pairs = [res["pair"] for res in results if not res["success"]]
-
-                message = f"""⚠️ **Partial Grid Start**
-
-✅ **Started:** {", ".join(success_pairs)}
-❌ **Failed:** {", ".join(failed_pairs)}
-
-Check your API permissions and account balance."""
-
-                keyboard = [
-                    [
-                        InlineKeyboardButton(
-                            "📊 Dashboard", callback_data="show_dashboard"
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            "🔄 Retry Failed", callback_data="start_trading"
-                        )
-                    ],
                 ]
 
             else:
-                # No grids started
-                error_messages = [
-                    res["result"].get("error", "Unknown error")
-                    for res in results
-                    if not res["success"]
-                ]
-                first_error = error_messages[0] if error_messages else "Unknown error"
+                error_message = result.get("error", "Unknown error")
+                message = f"""❌ **Grid Launch Failed**
 
-                message = f"""❌ **Grid Start Failed**
+Error: {error_message}
 
-Error: {first_error}
-
-Please check:
-• API key permissions (Spot Trading enabled)
-• Account balance (sufficient USDT)
-• Network connection"""
+**Common solutions:**
+• Check API key permissions
+• Ensure sufficient balance
+• Verify trading pair availability"""
 
                 keyboard = [
                     [
@@ -303,11 +398,7 @@ Please check:
                             "🔄 Try Again", callback_data="start_trading"
                         )
                     ],
-                    [
-                        InlineKeyboardButton(
-                            "⚙️ Check Settings", callback_data="show_settings"
-                        )
-                    ],
+                    [InlineKeyboardButton("⚙️ Settings", callback_data="show_settings")],
                     [
                         InlineKeyboardButton(
                             "📊 Dashboard", callback_data="show_dashboard"
@@ -322,518 +413,56 @@ Please check:
             )
 
         except Exception as e:
-            self.logger.error(
-                f"Error in confirm_start_trading for client {client_id}: {e}"
-            )
-
-            keyboard = [
-                [InlineKeyboardButton("🔄 Try Again", callback_data="start_trading")],
-                [InlineKeyboardButton("📊 Dashboard", callback_data="show_dashboard")],
-            ]
-
+            self.logger.error(f"Error executing trade: {e}")
             await query.edit_message_text(
-                "❌ **System Error**\n\n"
-                "An error occurred while starting trading.\n"
-                "Please try again or contact support.",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode="Markdown",
+                "❌ **System Error**\n\nFailed to start grid. Please try again.",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "📊 Dashboard", callback_data="show_dashboard"
+                            )
+                        ]
+                    ]
+                ),
             )
-
-    async def _setup_api_keys(self, query, client_id):
-        """Setup API keys flow"""
-        # Clear any existing state
-        if client_id in self.client_states:
-            del self.client_states[client_id]
-
-        # Set state for API key input
-        self.client_states[client_id] = {"step": "waiting_api_key"}
-
-        message = """🔐 **Binance API Setup**
-
-**Step 1:** Send your Binance API Key
-
-**How to get your API keys:**
-1. Go to Binance.com → Profile → API Management
-2. Create new API key with these permissions:
-   ✅ Enable Spot Trading
-   ❌ DO NOT enable withdrawals
-3. Copy and send your API Key below
-
-**Security:** Your keys are encrypted and used only for trading."""
-
-        keyboard = [
-            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_input")],
-            [InlineKeyboardButton("🔙 Back", callback_data="show_dashboard")],
-        ]
-
-        await query.edit_message_text(
-            message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
-        )
-
-    async def _show_settings(self, query, client_id):
-        """Show client settings"""
-        client = self.client_repo.get_client(client_id)
-
-        message = f"""⚙️ **Trading Settings**
-
-**Current Configuration:**
-💰 Capital: ${client.total_capital:,.2f}
-📈 Risk Level: {client.risk_level.title()}
-🎯 Grid Spacing: {client.grid_spacing * 100:.1f}%
-📊 Grid Levels: {client.grid_levels}
-💵 Order Size: ${client.order_size:.2f}
-🔄 Trading Pairs: {", ".join(client.trading_pairs)}
-
-**API Status:**
-🔐 API Key: {"✅ Set" if client.binance_api_key else "❌ Not Set"}
-
-Configure your bot:"""
-
-        keyboard = [
-            [InlineKeyboardButton("🔐 Update API Keys", callback_data="setup_api")],
-            [InlineKeyboardButton("💰 Set Capital", callback_data="set_capital")],
-            [InlineKeyboardButton("📊 Dashboard", callback_data="show_dashboard")],
-        ]
-
-        await query.edit_message_text(
-            message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
-        )
-
-    async def _show_performance(self, query, client_id):
-        """Show trading performance"""
-        performance = await self.grid_orchestrator.get_client_performance(client_id)
-
-        message = f"""📈 **Trading Performance**
-
-**Overall Statistics:**
-📊 Total Trades: {performance.get("total_trades", 0)}
-💰 Total Profit: ${performance.get("total_profit", 0):.2f}
-📈 Win Rate: {performance.get("win_rate", 0):.1f}%
-💵 Total Volume: ${performance.get("total_volume", 0):,.2f}
-
-**Active Grids:**
-🤖 Running: {len(performance.get("active_grids", {}))}/2 pairs
-
-**Recent Activity:**
-{self._format_recent_trades(performance.get("recent_trades", []))}"""
-
-        keyboard = [
-            [InlineKeyboardButton("📊 Dashboard", callback_data="show_dashboard")],
-            [InlineKeyboardButton("⚙️ Settings", callback_data="show_settings")],
-        ]
-
-        await query.edit_message_text(
-            message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
-        )
-
-    def _format_recent_trades(self, trades):
-        """Format recent trades for display"""
-        if not trades:
-            return "No recent trades"
-
-        formatted = []
-        for trade in trades[:5]:  # Show last 5 trades
-            symbol = trade.get("symbol", "UNKNOWN")
-            side = trade.get("side", "UNKNOWN")
-            profit = trade.get("profit", 0)
-            emoji = "🟢" if side == "SELL" else "🔵"
-            formatted.append(f"{emoji} {symbol} {side} (+${profit:.2f})")
-
-        return "\n".join(formatted)
-
-    async def _start_trading(self, query, client_id):
-        """Start grid trading for client"""
-        client = self.client_repo.get_client(client_id)
-
-        if not client.can_start_grid():
-            await query.edit_message_text(
-                "❌ Cannot start trading. Please ensure:\n"
-                "• API keys are configured\n"
-                "• Capital is set\n"
-                "• Account is active"
-            )
-            return
-
-        message = f"""🚀 **Start Grid Trading**
-
-Ready to start automated grid trading with:
-
-💰 **Capital:** ${client.total_capital:,.2f}
-🎯 **Pairs:** {", ".join(client.trading_pairs)}
-📊 **Strategy:** Grid spacing {client.grid_spacing * 100:.1f}%
-💵 **Order Size:** ${client.order_size:.2f} per order
-
-**This will:**
-• Create grid orders for each pair
-• Trade automatically 24/7
-• Generate profits from market volatility
-
-Ready to begin?"""
-
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    "✅ START TRADING", callback_data="confirm_start_trading"
-                )
-            ],
-            [InlineKeyboardButton("❌ Cancel", callback_data="show_dashboard")],
-        ]
-
-        await query.edit_message_text(
-            message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
-        )
-
-    async def _set_capital(self, query, client_id):
-        """Start capital setting process"""
-        # Clear any existing state
-        if client_id in self.client_states:
-            del self.client_states[client_id]
-
-        # Set state for capital input
-        self.client_states[client_id] = {"step": "waiting_capital"}
-
-        message = """💰 **Set Trading Capital**
-
-Please enter the amount you want to use for grid trading.
-
-**Examples:**
-• `1000` - $1,000
-• `$2500` - $2,500
-• `500` - $500
-
-**Requirements:**
-• Minimum: $100
-• Recommended: $400+ for optimal grid spacing
-
-**Security:** This amount stays in your Binance account. We never handle your funds directly."""
-
-        keyboard = [
-            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_input")],
-            [InlineKeyboardButton("🔙 Back", callback_data="show_dashboard")],
-        ]
-
-        await query.edit_message_text(
-            message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
-        )
-
-    async def _cancel_input(self, query, client_id):
-        """Cancel any ongoing input"""
-        if client_id in self.client_states:
-            del self.client_states[client_id]
-
-        await query.edit_message_text(
-            "❌ **Input Cancelled**\n\nReturning to dashboard...",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("📊 Dashboard", callback_data="show_dashboard")]]
-            ),
-        )
-
-    async def _back_to_dashboard(self, query, client_id):
-        """Return to dashboard"""
-        client = self.client_repo.get_client(client_id)
-        await self._show_client_dashboard(query, client)
-
-    async def _stop_all_grids(self, query, client_id):
-        """Stop all active grids for client"""
-        await query.edit_message_text("🔄 **Stopping all grids...**")
-
-        result = await self.grid_orchestrator.stop_all_client_grids(client_id)
-
-        if result["success"]:
-            message = f"""🛑 **All Grids Stopped**
-
-✅ All trading grids have been stopped
-✅ {result["orders_cancelled"]} orders cancelled
-✅ Positions secured
-
-Your account is now in safe mode."""
-
-        else:
-            message = f"""❌ **Error Stopping Grids**
-
-Some grids may still be active.
-Error: {result.get("error", "Unknown error")}
-
-Please check manually or contact support."""
-
-        keyboard = [
-            [InlineKeyboardButton("🚀 Start Trading", callback_data="start_trading")],
-            [InlineKeyboardButton("📊 Dashboard", callback_data="show_dashboard")],
-        ]
-
-        await query.edit_message_text(
-            message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
-        )
 
     async def handle_message(self, update, context):
-        """Handle text messages"""
+        """Handle text messages with smart trading commands"""
         client_id = update.effective_user.id
         text = update.message.text.strip()
 
-        self.logger.info(f"Message from client {client_id}: {text}")
+        self.logger.info(f"Smart message from client {client_id}: {text}")
 
-        # Handle API setup flow
-        if client_id in self.client_states:
-            await self._handle_api_input(update, client_id, text)
+        # Try common message handlers first (from BaseClientHandler)
+        if await self.handle_common_messages(update, context, text):
             return
 
-        # Handle trading commands
+        # Handle smart trading commands
         if self._is_trading_command(text):
-            await self._handle_trading_command(update, client_id, text)
+            await self._handle_smart_trading_command(update, client_id, text)
             return
 
-        # Default response
+        # Default response with helpful information
         keyboard = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("📊 Dashboard", callback_data="show_dashboard")]]
+            [
+                [
+                    InlineKeyboardButton(
+                        "🚀 Start Trading", callback_data="start_trading"
+                    )
+                ],
+                [InlineKeyboardButton("📊 Dashboard", callback_data="show_dashboard")],
+            ]
         )
 
         await update.message.reply_text(
-            "💡 **Quick Commands:**\n"
-            "• /start - Main dashboard\n"
-            "• ADA 1000 - Trade ADA with $1000\n"
-            "• AVAX 500 - Trade AVAX with $500",
+            "🧠 **Smart Trading Commands:**\n"
+            "• `ADA 1000` - Start ADA grid with $1000\n"
+            "• `AVAX 500` - Start AVAX grid with $500\n\n"
+            "**Or use the buttons below:**",
             reply_markup=keyboard,
+            parse_mode="Markdown",
         )
-
-    async def _handle_api_input(self, update, client_id, text):
-        """Handle API key input with better error handling"""
-        client_state = self.client_states.get(client_id, {})
-        step = client_state.get("step")
-
-        self.logger.info(f"Handling API input for client {client_id}, step: {step}")
-
-        if step == "waiting_api_key":
-            # Validate API key format
-            is_valid, error = Validators.validate_api_key(text)
-            if not is_valid:
-                await update.message.reply_text(
-                    f"❌ {error}\nPlease send a valid API key."
-                )
-                return
-
-            try:
-                # Store temporarily in state
-                self.client_states[client_id] = {
-                    "step": "waiting_secret_key",
-                    "temp_api_key": text,
-                }
-
-                keyboard = InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_input")]]
-                )
-
-                await update.message.reply_text(
-                    "✅ **API Key received!**\n\n"
-                    "**Step 2:** Now send your Secret Key\n\n"
-                    "🔒 Your keys will be encrypted and secured after both are provided.",
-                    reply_markup=keyboard,
-                    parse_mode="Markdown",
-                )
-
-            except Exception as e:
-                self.logger.error(f"Error saving API key for client {client_id}: {e}")
-                await update.message.reply_text(
-                    "❌ Error saving API key. Please try again."
-                )
-
-        elif step == "waiting_secret_key":
-            # Validate secret key format
-            is_valid, error = Validators.validate_api_key(text)
-            if not is_valid:
-                await update.message.reply_text(
-                    f"❌ {error}\nPlease send a valid secret key."
-                )
-                return
-
-            try:
-                # Get both keys
-                temp_api_key = client_state.get("temp_api_key")
-                secret_key = text
-
-                if not temp_api_key:
-                    await update.message.reply_text(
-                        "❌ **Setup Error**\n\nAPI key was lost. Please start setup again."
-                    )
-                    return
-
-                # Save both keys to database (encrypted)
-                client = self.client_repo.get_client(client_id)
-                client.binance_api_key = temp_api_key
-                client.binance_secret_key = secret_key
-
-                update_success = self.client_repo.update_client(client)
-
-                if not update_success:
-                    await update.message.reply_text(
-                        "❌ **Failed to save API keys**\n\n"
-                        "Please try the setup process again."
-                    )
-                    return
-
-                # Clear state
-                del self.client_states[client_id]
-
-                # Test API connection
-                self.logger.info(f"Testing API connection for client {client_id}")
-
-                try:
-                    connection_test = await self.grid_orchestrator.test_client_api(
-                        client_id
-                    )
-
-                    if connection_test.get("success", False):
-                        keyboard = InlineKeyboardMarkup(
-                            [
-                                [
-                                    InlineKeyboardButton(
-                                        "💰 Set Capital", callback_data="set_capital"
-                                    )
-                                ],
-                                [
-                                    InlineKeyboardButton(
-                                        "📊 Dashboard", callback_data="show_dashboard"
-                                    )
-                                ],
-                            ]
-                        )
-
-                        await update.message.reply_text(
-                            "🎉 **API Setup Complete!**\n\n"
-                            "✅ Keys saved and encrypted\n"
-                            "✅ Connection successful\n"
-                            "✅ Ready for trading\n\n"
-                            "**Next Step:** Set your trading capital",
-                            reply_markup=keyboard,
-                            parse_mode="Markdown",
-                        )
-                    else:
-                        error_msg = connection_test.get(
-                            "error", "Unknown connection error"
-                        )
-
-                        keyboard = InlineKeyboardMarkup(
-                            [
-                                [
-                                    InlineKeyboardButton(
-                                        "🔄 Try Again", callback_data="setup_api"
-                                    )
-                                ],
-                                [
-                                    InlineKeyboardButton(
-                                        "📊 Dashboard", callback_data="show_dashboard"
-                                    )
-                                ],
-                            ]
-                        )
-
-                        await update.message.reply_text(
-                            f"⚠️ **API Keys Saved, Connection Issue**\n\n"
-                            f"✅ Your keys are saved securely\n"
-                            f"❌ Connection test failed: {error_msg}\n\n"
-                            f"Please check your API key permissions:\n"
-                            f"• Spot Trading must be enabled\n"
-                            f"• IP restrictions (if any) must allow your server\n"
-                            f"• Keys must be active",
-                            reply_markup=keyboard,
-                            parse_mode="Markdown",
-                        )
-
-                except Exception as api_test_error:
-                    self.logger.error(
-                        f"API test error for client {client_id}: {api_test_error}"
-                    )
-
-                    keyboard = InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "💰 Set Capital Anyway", callback_data="set_capital"
-                                )
-                            ],
-                            [
-                                InlineKeyboardButton(
-                                    "🔄 Retry Setup", callback_data="setup_api"
-                                )
-                            ],
-                            [
-                                InlineKeyboardButton(
-                                    "📊 Dashboard", callback_data="show_dashboard"
-                                )
-                            ],
-                        ]
-                    )
-
-                    await update.message.reply_text(
-                        "✅ **API Keys Saved Successfully**\n\n"
-                        "⚠️ Connection test encountered an error, but your keys are saved.\n\n"
-                        "You can proceed to set your capital and the system will test "
-                        "the connection when you start trading.",
-                        reply_markup=keyboard,
-                        parse_mode="Markdown",
-                    )
-
-            except Exception as e:
-                self.logger.error(
-                    f"Error in secret key processing for client {client_id}: {e}"
-                )
-                if client_id in self.client_states:
-                    del self.client_states[client_id]
-
-                await update.message.reply_text(
-                    "❌ **Setup Error**\n\n"
-                    "There was an error saving your API keys. Please try the setup process again."
-                )
-
-        elif step == "waiting_capital":
-            # Handle capital input
-            is_valid, amount, error = Validators.validate_capital_amount(text)
-            if not is_valid:
-                await update.message.reply_text(
-                    f"❌ {error}\nPlease enter a valid amount (minimum $100)."
-                )
-                return
-
-            # Save capital
-            client = self.client_repo.get_client(client_id)
-            client.total_capital = amount
-            client.order_size = min(
-                50.0, amount / (len(client.trading_pairs) * client.grid_levels)
-            )
-            self.client_repo.update_client(client)
-
-            # Clear state
-            del self.client_states[client_id]
-
-            keyboard = InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton(
-                            "🚀 Start Trading", callback_data="start_trading"
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            "📊 Dashboard", callback_data="show_dashboard"
-                        )
-                    ],
-                ]
-            )
-
-            await update.message.reply_text(
-                f"✅ **Capital Set: ${amount:,.2f}**\n\n"
-                f"💵 Order size per trade: ${client.order_size:.2f}\n"
-                f"📊 Grid levels: {client.grid_levels} per pair\n"
-                f"🎯 Trading pairs: {', '.join(client.trading_pairs)}\n\n"
-                f"Ready to start automated trading!",
-                reply_markup=keyboard,
-                parse_mode="Markdown",
-            )
-
-        else:
-            # Unknown step, clear state
-            if client_id in self.client_states:
-                del self.client_states[client_id]
-            await update.message.reply_text("❌ Setup error. Please start again.")
 
     def _is_trading_command(self, text):
         """Check if text is a trading command"""
@@ -843,17 +472,17 @@ Please check manually or contact support."""
                 symbol = parts[0]
                 amount = float(parts[1])
                 return symbol in ["ADA", "AVAX", "BTC", "ETH"] and amount > 0
-            except:
+            except ValueError:
                 pass
         return False
 
-    async def _handle_trading_command(self, update, client_id, text):
-        """Handle trading command like 'ADA 1000'"""
+    async def _handle_smart_trading_command(self, update, client_id, text):
+        """Handle smart trading command like 'ADA 1000'"""
         client = self.client_repo.get_client(client_id)
 
         if not client or not client.is_active():
             await update.message.reply_text(
-                "❌ Please complete your account setup first."
+                "❌ Please complete your smart trading setup first."
             )
             return
 
@@ -878,24 +507,25 @@ Please check manually or contact support."""
                 )
                 return
 
-            message = f"""🎯 **Confirm Grid Trading**
+            message = f"""🧠 **Smart Grid Trading Setup**
 
 **Symbol:** {symbol}/USDT
 **Capital:** ${amount:,.2f}
-**Strategy:** Grid trading with {client.grid_spacing * 100:.1f}% spacing
+**Strategy:** Smart Adaptive Grid
 
-**Execution Plan:**
-• Create {client.grid_levels} buy orders below market
-• Create {client.grid_levels} sell orders above market
-• Order size: ${min(client.order_size, amount / client.grid_levels):.2f} each
-• Automatic profit capture on every price move
+**Features:**
+✅ Automated grid trading
+✅ Smart buy/sell levels
+✅ Risk management
+✅ 24/7 monitoring
 
-Ready to execute?"""
+Ready to launch?"""
 
             keyboard = [
                 [
                     InlineKeyboardButton(
-                        "✅ EXECUTE", callback_data=f"execute_trade_{symbol}_{amount}"
+                        "🚀 LAUNCH GRID",
+                        callback_data=f"execute_trade_{symbol}_{amount}",
                     )
                 ],
                 [InlineKeyboardButton("❌ Cancel", callback_data="show_dashboard")],
@@ -908,69 +538,48 @@ Ready to execute?"""
             )
 
         except Exception as e:
-            self.logger.error(f"Error handling trading command: {e}")
+            self.logger.error(f"Error handling smart trading command: {e}")
             await update.message.reply_text(
                 "❌ Invalid format. Use: SYMBOL AMOUNT (e.g., ADA 1000)"
             )
 
-    async def _execute_trade(self, query, action):
-        """Execute trading command"""
-        client_id = query.from_user.id
-
-        try:
-            parts = action.replace("execute_trade_", "").split("_")
-            symbol = parts[0]
-            amount = float(parts[1])
-        except:
-            await query.edit_message_text("❌ Invalid trade parameters")
-            return
-
-        await query.edit_message_text("🔄 **Executing Grid Setup...**")
-
-        # Execute through grid orchestrator
-        result = await self.grid_orchestrator.start_client_grid(
-            client_id, symbol, amount
+    async def _handle_new_smart_client(self, update, user):
+        """Handle new client with smart trading introduction"""
+        client = self.client_repo.create_client(
+            telegram_id=user.id, username=user.username, first_name=user.first_name
         )
 
-        if result["success"]:
-            status = result["status"]
+        message = f"""🤖 **Welcome to GridTrader Pro Smart Trading**
 
-            message = f"""🎉 **Grid Trading Started!**
+Hi {user.first_name}! Welcome to professional grid trading.
 
-✅ **{symbol}/USDT Grid Active**
+**🧠 Smart Features:**
+✅ **Automated Grid Trading**
+   • Smart buy/sell levels
+   • 24/7 market monitoring
+   • Automatic profit capture
 
-📊 **Setup Complete:**
-• {status["buy_levels"]} buy orders placed
-• {status["sell_levels"]} sell orders placed
-• Total orders: {status["total_orders"]}
-• Grid center: ${status["center_price"]:.4f}
+✅ **Risk Management**
+   • Position size controls
+   • Stop-loss protection
+   • Capital preservation
 
-🤖 **Bot Status:** Active 24/7
-💰 **Ready to capture profits!**
+✅ **Supported Assets**
+   • ADA/USDT - Cardano
+   • AVAX/USDT - Avalanche
 
-Your grid will automatically trade when prices move."""
+**Setup Steps:**
+1. Configure your Binance API keys
+2. Set your trading capital
+3. Start earning profits!
 
-            keyboard = [
-                [InlineKeyboardButton("📊 Dashboard", callback_data="show_dashboard")],
-                [
-                    InlineKeyboardButton(
-                        "📈 Performance", callback_data="show_performance"
-                    )
-                ],
-            ]
+Ready to begin?"""
 
-        else:
-            message = f"""❌ **Grid Setup Failed**
+        keyboard = [
+            [InlineKeyboardButton("🔐 Setup API Keys", callback_data="setup_api")],
+            [InlineKeyboardButton("📊 Dashboard", callback_data="show_dashboard")],
+        ]
 
-Error: {result.get("error", "Unknown error")}
-
-Please check your account and try again."""
-
-            keyboard = [
-                [InlineKeyboardButton("🔄 Try Again", callback_data="start_trading")],
-                [InlineKeyboardButton("📊 Dashboard", callback_data="show_dashboard")],
-            ]
-
-        await query.edit_message_text(
+        await update.message.reply_text(
             message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
         )

@@ -15,16 +15,6 @@ from repositories.trade_repository import TradeRepository
 from services.market_analysis import MarketAnalysisService, MarketCondition
 
 
-def notify_fifo(self):
-    """Helper to notify FIFO orchestrator (currently logs a message)."""
-    try:
-        if hasattr(self, "client_id") and hasattr(self, "logger"):
-            self.logger.info(f"📊 FIFO: Should log trade for client {self.client_id}")
-    except Exception as e:
-        if hasattr(self, "logger"):
-            self.logger.warning(f"FIFO logging failed: {e}")
-
-
 class DualScaleGridManager:
     """Smart 35/65 dual-scale grid system - FIXED ALL BINANCE API ISSUES"""
 
@@ -81,95 +71,51 @@ class DualScaleGridManager:
         }
 
     def _safe_binance_call(self, method_name: str, *args, **kwargs):
-        """FIXED: Safely call Binance API methods with proper timestamp handling"""
+        """Simplified API calls with automatic timestamp handling"""
         try:
             method = getattr(self.binance_client, method_name)
 
-            # FIXED: Handle different API methods with appropriate parameters
-            if method_name == "get_symbol_ticker":
-                # FIXED: get_symbol_ticker doesn't support recvWindow
-                # and needs specific parameter handling
-                if "symbol" in kwargs:
-                    symbol = kwargs.pop("symbol")
-                    return method(symbol=symbol)
-                elif len(args) > 0:
-                    # If symbol passed as positional argument
-                    return method(symbol=args[0])
-                else:
-                    # No symbol specified - get all tickers
-                    return method()
-
-            elif method_name in [
+            # Add recvWindow for authenticated calls only
+            if method_name in [
                 "get_account",
                 "get_open_orders",
                 "order_limit_buy",
                 "order_limit_sell",
                 "cancel_order",
             ]:
-                # These methods support recvWindow and need timestamp sync
-                try:
-                    # Add extended recvWindow for timestamp issues
-                    kwargs["recvWindow"] = 60000  # 60 seconds
-                    return method(*args, **kwargs)
-                except Exception as e:
-                    if "recvWindow" in str(e) or "timestamp" in str(e).lower():
-                        # Retry with larger recvWindow
-                        self.logger.warning(
-                            f"Timestamp issue, retrying with larger window: {e}"
-                        )
-                        kwargs["recvWindow"] = 120000  # 2 minutes
-                        time.sleep(1)  # Brief pause to let timestamps align
-                        return method(*args, **kwargs)
-                    else:
-                        raise
+                kwargs["recvWindow"] = 60000
 
-            elif method_name == "get_exchange_info":
-                # get_exchange_info doesn't need recvWindow
-                return method(*args, **kwargs)
-
-            elif method_name == "get_server_time":
-                # Server time call doesn't need recvWindow
-                return method()
-
-            else:
-                # Default handling for other methods
-                try:
-                    return method(*args, **kwargs)
-                except TypeError:
-                    # If method doesn't support the parameters, try without extras
-                    return method(*args)
+            return method(*args, **kwargs)
 
         except Exception as e:
             self.logger.error(f"❌ Binance API call failed: {method_name} - {e}")
-
-            # Special handling for timestamp errors
-            if "timestamp" in str(e).lower() or "recvWindow" in str(e):
-                self.logger.error("🕐 Timestamp synchronization issue detected")
-                self.logger.error("💡 Consider synchronizing system clock with NTP")
-
             raise
 
     def _sync_server_time(self):
-        """Sync with Binance server time to avoid timestamp issues"""
+        """Simple, reliable time sync"""
         try:
-            server_time = self._safe_binance_call("get_server_time")
-            server_timestamp = server_time["serverTime"]
-            local_timestamp = int(time.time() * 1000)
-            time_diff = abs(server_timestamp - local_timestamp)
+            import requests
 
-            self.logger.info(
-                f"⏰ Time sync check: local={local_timestamp}, server={server_timestamp}, diff={time_diff}ms"
+            base_url = (
+                "https://testnet.binance.vision"
+                if getattr(self.binance_client, "testnet", False)
+                else "https://api.binance.com"
             )
+            response = requests.get(f"{base_url}/api/v3/time", timeout=10)
+            server_time = response.json()["serverTime"]
+            local_time = int(time.time() * 1000)
 
-            if time_diff > 30000:  # More than 30 seconds difference
-                self.logger.warning(f"⚠️ Large time difference detected: {time_diff}ms")
-                self.logger.warning("💡 System clock may need synchronization")
-
-            return time_diff < 60000  # Return True if within 1 minute
+            # Set offset once - handles all future requests automatically
+            self.binance_client.timestamp_offset = server_time - local_time
+            self.logger.info(
+                f"🔄 Time sync: offset {self.binance_client.timestamp_offset}ms"
+            )
+            return True
 
         except Exception as e:
-            self.logger.error(f"❌ Failed to sync server time: {e}")
-            return False
+            self.logger.warning(f"Time sync failed: {e}")
+            self.binance_client.timestamp_offset = -5000  # Safe fallback
+            return True  # Continue anyway
 
     async def start_dual_scale_grid(self, symbol: str, total_capital: float) -> Dict:
         """Start intelligent 35/65 dual-scale grid system - FIXED VERSION"""
@@ -178,13 +124,8 @@ class DualScaleGridManager:
                 f"🚀 Starting 35/65 dual-scale grid for {symbol} with ${total_capital:,.2f}"
             )
 
-            # FIXED: Sync time before starting
-            self.logger.info("🕐 Synchronizing with Binance server time...")
-            time_synced = self._sync_server_time()
-            if not time_synced:
-                self.logger.warning(
-                    "⚠️ Time sync warning - continuing with larger recvWindow"
-                )
+            # Simple time sync once
+            self._sync_server_time()
 
             # Calculate capital allocation
             base_capital = total_capital * self.BASE_ALLOCATION  # 35%
@@ -1362,3 +1303,14 @@ class DualScaleGridManager:
         except Exception as e:
             self.logger.error(f"❌ Stop dual-scale grid error for {symbol}: {e}")
             return {"success": False, "error": str(e)}
+
+    def notify_fifo(self):
+        """Helper to notify FIFO orchestrator (currently logs a message)."""
+        try:
+            if hasattr(self, "client_id") and hasattr(self, "logger"):
+                self.logger.info(
+                    f"📊 FIFO: Should log trade for client {self.client_id}"
+                )
+        except Exception as e:
+            if hasattr(self, "logger"):
+                self.logger.warning(f"FIFO logging failed: {e}")

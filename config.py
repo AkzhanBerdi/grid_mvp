@@ -1,5 +1,5 @@
 # config.py
-"""Configuration management for GridTrader Pro Client Service"""
+"""Configuration management for Right Bastard Client Service"""
 
 import os
 
@@ -9,7 +9,7 @@ load_dotenv()
 
 
 class Config:
-    """Production configuration for GridTrader Pro Client Service"""
+    """Production configuration for Right Bastard Client Service"""
 
     # Telegram Configuration
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -64,7 +64,7 @@ class Config:
     DEFAULT_GRID_SPACING = 0.025  # 2.5%
     DEFAULT_GRID_LEVELS = 8
     DEFAULT_ORDER_SIZE = 50.0  # USD per order
-    MIN_CAPITAL = 100.0  # Minimum capital to start trading
+    MIN_CAPITAL = 200.0  # Minimum capital to start trading
 
     # Risk Management
     MAX_LOSS_PER_TRADE = 0.01  # 1%

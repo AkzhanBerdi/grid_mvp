@@ -1,20 +1,25 @@
-# services/grid_orchestrator.py
-"""Grid Orchestrator - Manages all client grid trading operations"""
+# services/enhanced_grid_orchestrator.py - FIXED VERSION
+"""Enhanced Grid Orchestrator - Fixed Market Analysis Issues"""
 
 import logging
-from typing import Dict, List
+from datetime import datetime
+from typing import Dict
 
 from binance.client import Client
 
 from models.client import GridStatus
-from models.grid_config import GridConfig
 from repositories.client_repository import ClientRepository
 from repositories.trade_repository import TradeRepository
+from services.dual_scale_grid_manager import (
+    DualScaleGridManager as GridManager,
+)
+from services.market_analysis import MarketAnalysisService
 from utils.crypto import CryptoUtils
+from utils.fifo_telegram_monitor import FIFOMonitoringService
 
 
 class GridOrchestrator:
-    """Manages grid trading for all clients"""
+    """Fixed enhanced orchestrator with proper error handling"""
 
     def __init__(self):
         self.client_repo = ClientRepository()
@@ -22,18 +27,26 @@ class GridOrchestrator:
         self.crypto_utils = CryptoUtils()
         self.logger = logging.getLogger(__name__)
 
-        # Active grids: {client_id: {symbol: GridConfig}}
-        self.active_grids: Dict[int, Dict[str, GridConfig]] = {}
-
-        # Binance clients: {client_id: Client}
+        # Client connections
         self.binance_clients: Dict[int, Client] = {}
 
-    # services/grid_orchestrator.py - Fixed test_client_api method
+        # Adaptive grid managers for each client
+        self.adaptive_managers: Dict[int, GridManager] = {}
 
-    # services/grid_orchestrator.py - Fixed test_client_api method
+        # Market analysis service - initialized per client
+        self.market_analysis_services: Dict[int, MarketAnalysisService] = {}
+
+        # Performance tracking
+        self.global_performance = {
+            "total_clients": 0,
+            "active_grids": 0,
+            "total_trades": 0,
+            "total_profit": 0.0,
+            "market_adaptations": 0,
+        }
 
     async def test_client_api(self, client_id: int) -> Dict:
-        """Test client's Binance API connection with proper decryption"""
+        """Test client's Binance API connection"""
         try:
             client = self.client_repo.get_client(client_id)
             if (
@@ -43,743 +56,644 @@ class GridOrchestrator:
             ):
                 return {"success": False, "error": "API keys not configured"}
 
-            self.logger.info(f"Testing API connection for client {client_id}")
+            # Decrypt API keys
+            api_key, secret_key = self.client_repo.get_decrypted_api_keys(client)
+            if not api_key or not secret_key:
+                return {"success": False, "error": "Failed to decrypt API keys"}
 
-            # Use the repository's decryption method
+            # Create Binance client normally (SIMPLE FIX)
+            binance_client = Client(api_key, secret_key, testnet=False)
+
+            # Just set a custom recv_window for get_account specifically
             try:
-                api_key, secret_key = self.client_repo.get_decrypted_api_keys(client)
-
-                if not api_key or not secret_key:
-                    return {"success": False, "error": "Failed to decrypt API keys"}
-
-                self.logger.info(
-                    f"API keys decrypted successfully for client {client_id}"
-                )
-                self.logger.debug(
-                    f"API key length: {len(api_key)}, Secret key length: {len(secret_key)}"
-                )
-
-            except Exception as decrypt_error:
-                self.logger.error(
-                    f"Decryption error for client {client_id}: {decrypt_error}"
-                )
-                return {
-                    "success": False,
-                    "error": f"Key decryption failed: {str(decrypt_error)}",
-                }
-
-            # Create Binance client with better error handling
+                account = binance_client.get_account(recvWindow=60000)
+            except Exception:
+                # Fallback to default if recvWindow not supported
+                account = binance_client.get_account()
+            # Test connection
             try:
-                from binance.client import Client
-
-                binance_client = Client(api_key, secret_key, testnet=False)
-
-                self.logger.info(f"Binance client created for client {client_id}")
-
-            except Exception as client_error:
-                self.logger.error(
-                    f"Binance client creation error for client {client_id}: {client_error}"
-                )
-                return {
-                    "success": False,
-                    "error": f"Failed to create Binance client: {str(client_error)}",
-                }
-
-            # Test connection with timeout and better error handling
-            try:
-                # Test with ping first (lightweight)
-                ping_result = binance_client.ping()
-                self.logger.info(f"Binance ping successful for client {client_id}")
-
-                # Test with account info (requires valid API keys)
+                account = binance_client.get_account(recvWindow=60000)
+            except TypeError:
                 account = binance_client.get_account()
 
-                # Store client for later use
-                self.binance_clients[client_id] = binance_client
+            # Store client for later use
+            self.binance_clients[client_id] = binance_client
 
-                self.logger.info(f"✅ API connection successful for client {client_id}")
-                return {
-                    "success": True,
-                    "account_type": account.get("accountType"),
-                    "can_trade": account.get("canTrade", False),
-                    "permissions": account.get("permissions", []),
-                    "balances_count": len(account.get("balances", [])),
-                }
+            # Initialize market analysis service for this client
+            self.market_analysis_services[client_id] = MarketAnalysisService(
+                binance_client
+            )
 
-            except Exception as api_error:
-                error_msg = str(api_error)
-                self.logger.error(
-                    f"❌ Binance API test failed for client {client_id}: {error_msg}"
-                )
-
-                # Parse common Binance API errors
-                if "Invalid API-key" in error_msg:
-                    return {
-                        "success": False,
-                        "error": "Invalid API key - please check your Binance API key",
-                    }
-                elif "Signature for this request is not valid" in error_msg:
-                    return {
-                        "success": False,
-                        "error": "Invalid secret key - please check your Binance secret key",
-                    }
-                elif "IP address" in error_msg:
-                    return {
-                        "success": False,
-                        "error": "IP restriction - add your server IP to Binance API whitelist",
-                    }
-                elif "permission" in error_msg.lower():
-                    return {
-                        "success": False,
-                        "error": "API permissions - ensure 'Spot Trading' is enabled",
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "error": f"Binance API error: {error_msg}",
-                    }
+            return {
+                "success": True,
+                "account_type": account.get("accountType"),
+                "can_trade": account.get("canTrade", False),
+                "permissions": account.get("permissions", []),
+                "balances_count": len(account.get("balances", [])),
+            }
 
         except Exception as e:
-            error_msg = str(e)
-            self.logger.error(f"❌ API test failed for client {client_id}: {error_msg}")
-            return {"success": False, "error": f"System error: {error_msg}"}
+            self.logger.error(f"❌ API test failed for client {client_id}: {e}")
+            return {"success": False, "error": str(e)}
 
     async def start_client_grid(
         self, client_id: int, symbol: str, capital: float
     ) -> Dict:
-        """Start grid trading for a client on a specific symbol - FIXED ORDER SIZING"""
+        """Start smart adaptive grid trading for a client"""
         try:
-            client = self.client_repo.get_client(client_id)
-            if not client or not client.can_start_grid():
-                return {"success": False, "error": "Client cannot start grid trading"}
+            self.logger.info(
+                f"🚀 Starting smart grid for client {client_id}: {symbol} with ${capital:,.2f}"
+            )
 
-            # Ensure we have a Binance client
+            # Validate minimum capital first
+            min_required = 160.0  # 16 orders × $10 minimum
+            if capital < min_required:
+                return {
+                    "success": False,
+                    "error": f"Minimum capital required: ${min_required:.2f} for NOTIONAL compliance",
+                }
+
+            # Ensure API connection
             if client_id not in self.binance_clients:
                 api_test = await self.test_client_api(client_id)
                 if not api_test["success"]:
-                    return {"success": False, "error": "Failed to connect to Binance"}
+                    return {
+                        "success": False,
+                        "error": "Failed to connect to Binance API",
+                    }
 
-            binance_client = self.binance_clients[client_id]
-            symbol_pair = f"{symbol}USDT"
+            # Initialize adaptive grid manager for client
+            if client_id not in self.adaptive_managers:
+                self.adaptive_managers[client_id] = GridManager(
+                    self.binance_clients[client_id], client_id
+                )
 
-            # Get current price
-            try:
-                ticker = binance_client.get_symbol_ticker(symbol=symbol_pair)
-                current_price = float(ticker["price"])
-            except Exception:
-                return {
-                    "success": False,
-                    "error": f"Failed to get price for {symbol_pair}",
-                }
+            # Start adaptive grid
+            manager = self.adaptive_managers[client_id]
+            result = await manager.start_dual_scale_grid(symbol, capital)
 
-            # FIXED: Proper order size calculation
-            # Use the capital provided directly, not the client's default order size
-            order_size_usd = (
-                capital / client.grid_levels
-            )  # Divide capital by number of levels
+            # Unified FIFO logging
+            if hasattr(self, "fifo_service"):
+                self.fifo_service.log_trade(
+                    client_id, symbol, side, quantity, price, order_id
+                )
 
-            self.logger.info("🔧 Order sizing calculation:")
-            self.logger.info(f"   Total capital: ${capital}")
-            self.logger.info(f"   Grid levels: {client.grid_levels}")
-            self.logger.info(f"   Order size per level: ${order_size_usd:.2f}")
-
-            # Create grid configuration with FIXED order size
-            grid_config = GridConfig(
-                symbol=symbol_pair,
-                client_id=client_id,
-                grid_spacing=client.grid_spacing,
-                grid_levels=client.grid_levels,
-                order_size=order_size_usd,  # Use calculated order size, not client.order_size
-            )
-
-            # Calculate and set grid levels
-            grid_config.calculate_grid_levels(current_price)
-
-            # Log the calculated grid for verification
-            self.logger.info(f"📊 Grid setup for {symbol_pair}:")
-            self.logger.info(f"   Current price: ${current_price:.4f}")
-            self.logger.info(f"   Order size USD: ${order_size_usd:.2f}")
-            self.logger.info(
-                f"   Sample buy order: {order_size_usd / current_price:.3f} {symbol} at ${grid_config.buy_levels[0]['price']:.4f}"
-            )
-            self.logger.info(
-                f"   Sample sell order: {order_size_usd / current_price:.3f} {symbol} at ${grid_config.sell_levels[0]['price']:.4f}"
-            )
-
-            # Execute initial grid setup
-            setup_result = await self._execute_grid_setup(binance_client, grid_config)
-
-            if setup_result["success"]:
-                # Store active grid
-                if client_id not in self.active_grids:
-                    self.active_grids[client_id] = {}
-                self.active_grids[client_id][symbol_pair] = grid_config
-
+            if result["success"]:
                 # Update client status
+                client = self.client_repo.get_client(client_id)
                 client.grid_status = GridStatus.ACTIVE
                 self.client_repo.update_client(client)
 
-                self.logger.info(
-                    f"✅ Grid started for client {client_id}: {symbol_pair}"
-                )
+                # Update global performance
+                self.global_performance["active_grids"] += 1
 
-                return {
-                    "success": True,
-                    "status": {
-                        "symbol": symbol_pair,
-                        "center_price": current_price,
-                        "buy_levels": len(grid_config.buy_levels),
-                        "sell_levels": len(grid_config.sell_levels),
-                        "total_orders": len(grid_config.buy_levels)
-                        + len(grid_config.sell_levels),
-                        "order_size": order_size_usd,
-                        "total_capital": capital,
-                    },
-                }
-            else:
-                return {"success": False, "error": setup_result["error"]}
-
-        except Exception as e:
-            self.logger.error(f"❌ Error starting grid for client {client_id}: {e}")
-            return {"success": False, "error": str(e)}
-
-    async def _execute_grid_setup(
-        self, binance_client: Client, grid_config: GridConfig
-    ) -> Dict:
-        """Execute the initial grid setup with proper price/quantity formatting"""
-        try:
-            # Get exchange info for the symbol to understand filters
-            exchange_info = binance_client.get_exchange_info()
-            symbol_info = None
-
-            for symbol in exchange_info["symbols"]:
-                if symbol["symbol"] == grid_config.symbol:
-                    symbol_info = symbol
-                    break
-
-            if not symbol_info:
-                return {
-                    "success": False,
-                    "error": f"Symbol {grid_config.symbol} not found",
-                }
-
-            # Extract filters
-            price_filter = None
-            lot_size_filter = None
-            min_notional_filter = None
-
-            for filter_info in symbol_info["filters"]:
-                if filter_info["filterType"] == "PRICE_FILTER":
-                    price_filter = filter_info
-                elif filter_info["filterType"] == "LOT_SIZE":
-                    lot_size_filter = filter_info
-                elif filter_info["filterType"] == "MIN_NOTIONAL":
-                    min_notional_filter = filter_info
-
-            self.logger.info(f"Symbol filters for {grid_config.symbol}:")
-            self.logger.info(f"  Price filter: {price_filter}")
-            self.logger.info(f"  Lot size filter: {lot_size_filter}")
-            self.logger.info(f"  Min notional filter: {min_notional_filter}")
-
-            orders_placed = 0
-            failed_orders = 0
-
-            # Place buy orders (limit orders below current price)
-            for level in grid_config.buy_levels:
-                try:
-                    # Format price according to Binance requirements
-                    raw_price = level["price"]
-                    raw_quantity = level["quantity"]
-
-                    # Format price with proper precision
-                    if price_filter:
-                        tick_size = float(price_filter["tickSize"])
-                        formatted_price = round(raw_price / tick_size) * tick_size
-
-                        # Ensure price is within min/max bounds
-                        min_price = float(price_filter["minPrice"])
-                        max_price = float(price_filter["maxPrice"])
-                        formatted_price = max(
-                            min_price, min(max_price, formatted_price)
-                        )
-                    else:
-                        formatted_price = round(raw_price, 8)
-
-                    # Format quantity according to lot size
-                    if lot_size_filter:
-                        step_size = float(lot_size_filter["stepSize"])
-                        formatted_quantity = round(raw_quantity / step_size) * step_size
-
-                        # Ensure quantity is within min/max bounds
-                        min_qty = float(lot_size_filter["minQty"])
-                        max_qty = float(lot_size_filter["maxQty"])
-                        formatted_quantity = max(
-                            min_qty, min(max_qty, formatted_quantity)
-                        )
-                    else:
-                        # Default formatting based on symbol
-                        if grid_config.symbol == "ADAUSDT":
-                            formatted_quantity = int(raw_quantity)
-                        else:
-                            formatted_quantity = round(raw_quantity, 6)
-
-                    # Check minimum notional value
-                    notional_value = formatted_price * formatted_quantity
-                    if min_notional_filter:
-                        min_notional = float(min_notional_filter["minNotional"])
-                        if notional_value < min_notional:
-                            self.logger.warning(
-                                f"Order value ${notional_value:.2f} below minimum ${min_notional:.2f}"
-                            )
-                            # Increase quantity to meet minimum
-                            formatted_quantity = (
-                                min_notional / formatted_price * 1.01
-                            )  # Add 1% buffer
-                            if lot_size_filter:
-                                step_size = float(lot_size_filter["stepSize"])
-                                formatted_quantity = (
-                                    round(formatted_quantity / step_size) * step_size
+                # Enhanced result with smart trading info
+                result.update(
+                    {
+                        "smart_trading_enabled": True,
+                        "adaptive_grids": {
+                            "base_grid": {
+                                "always_active": True,
+                                "purpose": "Consistent low-volume trading",
+                                "capital_allocation": "40%",
+                                "risk_level": "Conservative",
+                            },
+                            "enhanced_grid": {
+                                "market_dependent": result.get(
+                                    "enhanced_grid_orders", 0
                                 )
-
-                    self.logger.info(
-                        f"Buy order: {formatted_quantity} at ${formatted_price:.8f} (notional: ${notional_value:.2f})"
-                    )
-
-                    order = binance_client.order_limit_buy(
-                        symbol=grid_config.symbol,
-                        quantity=f"{formatted_quantity:.8f}".rstrip("0").rstrip("."),
-                        price=f"{formatted_price:.8f}".rstrip("0").rstrip("."),
-                    )
-
-                    if order and order.get("status") in ["NEW", "PARTIALLY_FILLED"]:
-                        level["order_id"] = order["orderId"]
-                        orders_placed += 1
-
-                        # Log to database
-                        self.trade_repo.log_grid_order(
-                            client_id=grid_config.client_id,
-                            symbol=grid_config.symbol,
-                            side="BUY",
-                            quantity=formatted_quantity,
-                            price=formatted_price,
-                            order_id=order["orderId"],
-                            grid_level=level["level"],
-                        )
-
-                except Exception as e:
-                    self.logger.warning(f"Failed to place buy order: {e}")
-                    failed_orders += 1
-
-            # Place sell orders (limit orders above current price)
-            for level in grid_config.sell_levels:
-                try:
-                    # Format price according to Binance requirements
-                    raw_price = level["price"]
-                    raw_quantity = level["quantity"]
-
-                    # Format price with proper precision
-                    if price_filter:
-                        tick_size = float(price_filter["tickSize"])
-                        formatted_price = round(raw_price / tick_size) * tick_size
-
-                        # Ensure price is within min/max bounds
-                        min_price = float(price_filter["minPrice"])
-                        max_price = float(price_filter["maxPrice"])
-                        formatted_price = max(
-                            min_price, min(max_price, formatted_price)
-                        )
-                    else:
-                        formatted_price = round(raw_price, 8)
-
-                    # Format quantity according to lot size
-                    if lot_size_filter:
-                        step_size = float(lot_size_filter["stepSize"])
-                        formatted_quantity = round(raw_quantity / step_size) * step_size
-
-                        # Ensure quantity is within min/max bounds
-                        min_qty = float(lot_size_filter["minQty"])
-                        max_qty = float(lot_size_filter["maxQty"])
-                        formatted_quantity = max(
-                            min_qty, min(max_qty, formatted_quantity)
-                        )
-                    else:
-                        # Default formatting based on symbol
-                        if grid_config.symbol == "ADAUSDT":
-                            formatted_quantity = int(raw_quantity)
-                        else:
-                            formatted_quantity = round(raw_quantity, 6)
-
-                    # Check minimum notional value
-                    notional_value = formatted_price * formatted_quantity
-                    if min_notional_filter:
-                        min_notional = float(min_notional_filter["minNotional"])
-                        if notional_value < min_notional:
-                            self.logger.warning(
-                                f"Sell order value ${notional_value:.2f} below minimum ${min_notional:.2f}"
-                            )
-                            # Increase quantity to meet minimum
-                            formatted_quantity = (
-                                min_notional / formatted_price * 1.01
-                            )  # Add 1% buffer
-                            if lot_size_filter:
-                                step_size = float(lot_size_filter["stepSize"])
-                                formatted_quantity = (
-                                    round(formatted_quantity / step_size) * step_size
-                                )
-
-                    self.logger.info(
-                        f"Sell order: {formatted_quantity} at ${formatted_price:.8f} (notional: ${notional_value:.2f})"
-                    )
-
-                    order = binance_client.order_limit_sell(
-                        symbol=grid_config.symbol,
-                        quantity=f"{formatted_quantity:.8f}".rstrip("0").rstrip("."),
-                        price=f"{formatted_price:.8f}".rstrip("0").rstrip("."),
-                    )
-
-                    if order and order.get("status") in ["NEW", "PARTIALLY_FILLED"]:
-                        level["order_id"] = order["orderId"]
-                        orders_placed += 1
-
-                        # Log to database
-                        self.trade_repo.log_grid_order(
-                            client_id=grid_config.client_id,
-                            symbol=grid_config.symbol,
-                            side="SELL",
-                            quantity=formatted_quantity,
-                            price=formatted_price,
-                            order_id=order["orderId"],
-                            grid_level=level["level"],
-                        )
-
-                except Exception as e:
-                    self.logger.warning(f"Failed to place sell order: {e}")
-                    failed_orders += 1
-
-            if orders_placed > 0:
-                grid_config.active = True
-                self.logger.info(
-                    f"✅ Grid setup completed: {orders_placed} orders placed, {failed_orders} failed"
+                                > 0,
+                                "purpose": "High-volume directional trading",
+                                "capital_allocation": "60%",
+                                "risk_level": result.get("risk_level", "Moderate"),
+                            },
+                        },
+                    }
                 )
-                return {
-                    "success": True,
-                    "orders_placed": orders_placed,
-                    "failed_orders": failed_orders,
-                }
-            else:
-                return {"success": False, "error": "No orders could be placed"}
+
+                self.logger.info(
+                    f"✅ Smart grid started for client {client_id}: {symbol}"
+                )
+
+            return result
 
         except Exception as e:
-            self.logger.error(f"❌ Grid setup execution error: {e}")
+            self.logger.error(
+                f"❌ Failed to start smart grid for client {client_id}: {e}"
+            )
             return {"success": False, "error": str(e)}
-
-    async def update_all_grids(self):
-        """Update all active grids - check for filled orders and manage positions"""
-        for client_id, client_grids in list(self.active_grids.items()):
-            try:
-                # Ensure we have a Binance client
-                if client_id not in self.binance_clients:
-                    # Try to reconnect
-                    api_test = await self.test_client_api(client_id)
-                    if not api_test["success"]:
-                        self.logger.warning(
-                            f"Cannot update grids for client {client_id}: API connection failed"
-                        )
-                        continue
-
-                binance_client = self.binance_clients[client_id]
-
-                for symbol, grid_config in client_grids.items():
-                    await self._update_grid(binance_client, grid_config)
-
-            except Exception as e:
-                self.logger.error(
-                    f"❌ Error updating grids for client {client_id}: {e}"
-                )
-
-    async def _update_grid(self, binance_client: Client, grid_config: GridConfig):
-        """Update a specific grid - check orders and replace filled ones"""
-        try:
-            # Get current price
-            ticker = binance_client.get_symbol_ticker(symbol=grid_config.symbol)
-            current_price = float(ticker["price"])
-
-            # Check if grid needs reset
-            if grid_config.should_reset_grid(current_price):
-                self.logger.info(f"🔄 Resetting grid for {grid_config.symbol}")
-                await self._reset_grid(binance_client, grid_config, current_price)
-                return
-
-            # Check for filled orders
-            filled_orders = await self._check_filled_orders(binance_client, grid_config)
-
-            # Replace filled orders with new ones
-            for filled_order in filled_orders:
-                await self._replace_filled_order(
-                    binance_client, grid_config, filled_order, current_price
-                )
-
-        except Exception as e:
-            self.logger.error(f"❌ Error updating grid {grid_config.symbol}: {e}")
-
-    async def _check_filled_orders(
-        self, binance_client: Client, grid_config: GridConfig
-    ) -> List[Dict]:
-        """Check for filled orders in the grid"""
-        filled_orders = []
-
-        try:
-            # Get all open orders for the symbol
-            open_orders = binance_client.get_open_orders(symbol=grid_config.symbol)
-            open_order_ids = {order["orderId"] for order in open_orders}
-
-            # Check buy levels
-            for level in grid_config.buy_levels:
-                if (
-                    level["order_id"]
-                    and level["order_id"] not in open_order_ids
-                    and not level["filled"]
-                ):
-                    # Order was filled
-                    level["filled"] = True
-                    filled_orders.append(
-                        {"side": "BUY", "level": level, "grid_config": grid_config}
-                    )
-
-            # Check sell levels
-            for level in grid_config.sell_levels:
-                if (
-                    level["order_id"]
-                    and level["order_id"] not in open_order_ids
-                    and not level["filled"]
-                ):
-                    # Order was filled
-                    level["filled"] = True
-                    filled_orders.append(
-                        {"side": "SELL", "level": level, "grid_config": grid_config}
-                    )
-
-        except Exception as e:
-            self.logger.error(f"❌ Error checking filled orders: {e}")
-
-        return filled_orders
-
-    async def _replace_filled_order(
-        self,
-        binance_client: Client,
-        grid_config: GridConfig,
-        filled_order: Dict,
-        current_price: float,
-    ):
-        """Replace a filled order with a new one on the opposite side"""
-        try:
-            side = filled_order["side"]
-            level_data = filled_order["level"]
-
-            # Log the filled trade
-            self.trade_repo.log_trade_execution(
-                client_id=grid_config.client_id,
-                symbol=grid_config.symbol,
-                side=side,
-                quantity=level_data["quantity"],
-                price=level_data["price"],
-                order_id=level_data["order_id"],
-            )
-
-            # Calculate profit (simplified - sell price minus buy price)
-            if side == "SELL":
-                # This was a sell, calculate profit
-                profit = (level_data["price"] - grid_config.center_price) * level_data[
-                    "quantity"
-                ]
-                self.logger.info(
-                    f"💰 Profit captured: ${profit:.2f} on {grid_config.symbol}"
-                )
-
-            # Place new order on opposite side
-            if side == "BUY":
-                # Original buy was filled, place new sell order above current price
-                new_price = current_price * (
-                    1 + grid_config.grid_spacing * level_data["level"]
-                )
-                new_side = "SELL"
-            else:
-                # Original sell was filled, place new buy order below current price
-                new_price = current_price * (
-                    1 - grid_config.grid_spacing * level_data["level"]
-                )
-                new_side = "BUY"
-
-            # Place the new order
-            quantity = level_data["quantity"]
-            if grid_config.symbol == "ADAUSDT":
-                quantity = int(quantity)
-
-            if new_side == "BUY":
-                order = binance_client.order_limit_buy(
-                    symbol=grid_config.symbol,
-                    quantity=str(quantity),
-                    price=f"{new_price:.8f}",
-                )
-            else:
-                order = binance_client.order_limit_sell(
-                    symbol=grid_config.symbol,
-                    quantity=str(quantity),
-                    price=f"{new_price:.8f}",
-                )
-
-            if order and order.get("status") in ["NEW", "PARTIALLY_FILLED"]:
-                # Update the level with new order info
-                level_data["price"] = new_price
-                level_data["order_id"] = order["orderId"]
-                level_data["filled"] = False
-
-                self.logger.info(
-                    f"🔄 Replaced {side} with {new_side} order at ${new_price:.4f}"
-                )
-
-        except Exception as e:
-            self.logger.error(f"❌ Error replacing filled order: {e}")
-
-    async def _reset_grid(
-        self, binance_client: Client, grid_config: GridConfig, new_price: float
-    ):
-        """Reset grid with new center price"""
-        try:
-            # Cancel all existing orders
-            await self._cancel_all_grid_orders(binance_client, grid_config)
-
-            # Reset grid configuration
-            grid_config.reset_grid(new_price)
-
-            # Place new orders
-            await self._execute_grid_setup(binance_client, grid_config)
-
-            self.logger.info(
-                f"✅ Grid reset completed for {grid_config.symbol} at ${new_price:.4f}"
-            )
-
-        except Exception as e:
-            self.logger.error(f"❌ Error resetting grid: {e}")
-
-    async def _cancel_all_grid_orders(
-        self, binance_client: Client, grid_config: GridConfig
-    ):
-        """Cancel all orders for a grid"""
-        try:
-            open_orders = binance_client.get_open_orders(symbol=grid_config.symbol)
-
-            for order in open_orders:
-                try:
-                    binance_client.cancel_order(
-                        symbol=grid_config.symbol, orderId=order["orderId"]
-                    )
-                except Exception as e:
-                    self.logger.warning(
-                        f"Failed to cancel order {order['orderId']}: {e}"
-                    )
-
-        except Exception as e:
-            self.logger.error(f"❌ Error cancelling grid orders: {e}")
 
     async def stop_all_client_grids(self, client_id: int) -> Dict:
-        """Stop all grids for a specific client"""
+        """Stop all adaptive grids for a client"""
         try:
-            if client_id not in self.active_grids:
-                return {"success": True, "orders_cancelled": 0}
+            if client_id not in self.adaptive_managers:
+                return {"success": True, "orders_cancelled": 0, "grids_stopped": 0}
 
-            if client_id not in self.binance_clients:
-                return {"success": False, "error": "No API connection"}
+            manager = self.adaptive_managers[client_id]
+            total_orders_cancelled = 0
 
-            binance_client = self.binance_clients[client_id]
-            orders_cancelled = 0
+            # Get all active grids
+            grids_status = manager.get_all_grids_status()
 
-            # Cancel orders for each active grid
-            for symbol, grid_config in self.active_grids[client_id].items():
-                try:
-                    await self._cancel_all_grid_orders(binance_client, grid_config)
-                    grid_config.active = False
-                    orders_cancelled += len(grid_config.buy_levels) + len(
-                        grid_config.sell_levels
+            # FIFO Integration - Log grid start/trade activity
+            # Unified FIFO logging
+            if hasattr(self, "fifo_service"):
+                self.fifo_service.log_trade(
+                    client_id, symbol, side, quantity, price, order_id
+                )
+            grids_stopped = len(grids_status)
+
+            # Stop each grid
+            for symbol in list(grids_status.keys()):
+                stop_result = await manager.stop_adaptive_grid(symbol)
+
+                # FIFO Integration - Log grid start/trade activity
+                # Unified FIFO logging
+                if hasattr(self, "fifo_service"):
+                    self.fifo_service.log_trade(
+                        client_id, symbol, side, quantity, price, order_id
                     )
-                except Exception as e:
-                    self.logger.error(f"Error stopping grid {symbol}: {e}")
+                if stop_result["success"]:
+                    total_orders_cancelled += 10  # Estimate based on grid size
 
-            # Clear active grids
-            del self.active_grids[client_id]
+            # Clean up manager
+            del self.adaptive_managers[client_id]
+
+            # Clean up market analysis service
+            if client_id in self.market_analysis_services:
+                del self.market_analysis_services[client_id]
 
             # Update client status
             client = self.client_repo.get_client(client_id)
             client.grid_status = GridStatus.INACTIVE
             self.client_repo.update_client(client)
 
-            self.logger.info(f"🛑 All grids stopped for client {client_id}")
-            return {"success": True, "orders_cancelled": orders_cancelled}
+            # Update global performance
+            self.global_performance["active_grids"] = max(
+                0, self.global_performance["active_grids"] - grids_stopped
+            )
+
+            return {
+                "success": True,
+                "orders_cancelled": total_orders_cancelled,
+                "grids_stopped": grids_stopped,
+            }
 
         except Exception as e:
-            self.logger.error(f"❌ Error stopping grids for client {client_id}: {e}")
+            self.logger.error(f"❌ Failed to stop grids for client {client_id}: {e}")
             return {"success": False, "error": str(e)}
 
+    async def get_client_performance(self, client_id: int) -> Dict:
+        """Get comprehensive performance metrics for a client"""
+        try:
+            # Get basic trade stats
+            trade_stats = self.trade_repo.get_client_trade_stats(client_id)
+
+            # Get adaptive grid performance if manager exists
+            adaptive_performance = {}
+            if client_id in self.adaptive_managers:
+                manager = self.adaptive_managers[client_id]
+                grids_status = manager.get_all_grids_status()
+
+                # FIFO Integration - Log grid start/trade activity
+                # Unified FIFO logging
+                if hasattr(self, "fifo_service"):
+                    self.fifo_service.log_trade(
+                        client_id, symbol, side, quantity, price, order_id
+                    )
+
+                for symbol, grid_status in grids_status.items():
+                    if grid_status.get("active"):
+                        adaptive_performance[symbol] = {
+                            "market_condition": grid_status.get("market_condition", {}),
+                            "base_grid_active": grid_status.get(
+                                "base_grid_active", False
+                            ),
+                            "enhanced_grid_active": grid_status.get(
+                                "enhanced_grid_active", False
+                            ),
+                            "performance_metrics": grid_status.get(
+                                "performance_metrics", {}
+                            ),
+                            "risk_level": grid_status.get("grid_config", {}).get(
+                                "risk_level", "moderate"
+                            ),
+                        }
+
+            # Enhanced performance data
+            enhanced_performance = {
+                "client_id": client_id,
+                "trading_mode": "Smart Adaptive Grid",
+                "basic_stats": {
+                    "total_trades": trade_stats.get("total_trades", 0),
+                    "total_profit": trade_stats.get("total_profit", 0.0),
+                    "total_volume": trade_stats.get("total_volume", 0.0),
+                    "win_rate": trade_stats.get("win_rate", 0.0),
+                    "avg_profit_per_trade": (
+                        trade_stats.get("total_profit", 0.0)
+                        / max(1, trade_stats.get("total_trades", 1))
+                    ),
+                },
+                "adaptive_performance": adaptive_performance,
+                "smart_trading_insights": self._generate_trading_insights(
+                    trade_stats, adaptive_performance
+                ),
+                "recent_trades": trade_stats.get("recent_trades", []),
+            }
+
+            return enhanced_performance
+
+        except Exception as e:
+            self.logger.error(
+                f"❌ Failed to get performance for client {client_id}: {e}"
+            )
+            return {"error": str(e)}
+        # FIFO Profit Monitoring Integration
+        if FIFO_AVAILABLE:
+            try:
+                from main import GridTradingService
+
+                if (
+                    hasattr(GridTradingService, "_instance")
+                    and GridTradingService._instance
+                ):
+                    self.fifo_service = GridTradingService._instance.fifo_service
+                else:
+                    self.fifo_service = FIFOMonitoringService()
+            except:
+                self.fifo_service = None
+        else:
+            self.fifo_service = None
+
+    def _generate_trading_insights(
+        self, trade_stats: Dict, adaptive_performance: Dict
+    ) -> Dict:
+        """Generate smart trading insights"""
+        insights = {
+            "market_adaptation_score": 0.0,
+            "risk_management_score": 0.0,
+            "efficiency_score": 0.0,
+            "recommendations": [],
+        }
+
+        try:
+            total_trades = trade_stats.get("total_trades", 0)
+            total_profit = trade_stats.get("total_profit", 0.0)
+
+            # Market adaptation score
+            total_adaptations = sum(
+                perf.get("performance_metrics", {}).get("market_adaptations", 0)
+                for perf in adaptive_performance.values()
+            )
+
+            if total_adaptations > 0:
+                insights["market_adaptation_score"] = min(1.0, total_adaptations / 10)
+
+            # Risk management score
+            avg_risk_level = 0.5  # Default moderate
+            if adaptive_performance:
+                risk_levels = [
+                    0.3
+                    if perf.get("risk_level") == "conservative"
+                    else 0.5
+                    if perf.get("risk_level") == "moderate"
+                    else 0.7
+                    for perf in adaptive_performance.values()
+                ]
+                avg_risk_level = (
+                    sum(risk_levels) / len(risk_levels) if risk_levels else 0.5
+                )
+
+            insights["risk_management_score"] = 1.0 - abs(avg_risk_level - 0.5)
+
+            # Efficiency score
+            if total_trades > 0:
+                profit_per_trade = total_profit / total_trades
+                insights["efficiency_score"] = min(1.0, max(0.0, profit_per_trade / 10))
+
+            # Generate recommendations
+            if insights["market_adaptation_score"] < 0.3:
+                insights["recommendations"].append(
+                    "Consider increasing market monitoring frequency for better adaptation"
+                )
+
+            if insights["efficiency_score"] < 0.4:
+                insights["recommendations"].append(
+                    "Review grid spacing and levels for improved efficiency"
+                )
+
+            if avg_risk_level > 0.7:
+                insights["recommendations"].append(
+                    "Consider reducing position sizes in volatile market conditions"
+                )
+
+            return insights
+
+        except Exception as e:
+            self.logger.error(f"❌ Failed to generate trading insights: {e}")
+            return insights
+
     def get_client_grid_status(self, client_id: int) -> Dict:
-        """Get grid status for a specific client"""
-        if client_id not in self.active_grids:
-            return {"active_grids": {}, "total_grids": 0}
+        """Get current grid status for a client"""
+        try:
+            if client_id not in self.adaptive_managers:
+                return {"active_grids": {}, "total_grids": 0}
 
-        status = {"active_grids": {}, "total_grids": len(self.active_grids[client_id])}
+            manager = self.adaptive_managers[client_id]
+            grids_status = manager.get_all_grids_status()
 
-        for symbol, grid_config in self.active_grids[client_id].items():
-            status["active_grids"][symbol] = grid_config.get_grid_status()
+            # FIFO Integration - Log grid start/trade activity
+            # Unified FIFO logging
+            if hasattr(self, "fifo_service"):
+                self.fifo_service.log_trade(
+                    client_id, symbol, side, quantity, price, order_id
+                )
 
-        return status
+            # Enhanced status with smart trading info
+            enhanced_status = {
+                "active_grids": {},
+                "total_grids": len(grids_status),
+                "trading_mode": "Smart Adaptive",
+                "global_performance": self.global_performance,
+            }
+
+            for symbol, grid_status in grids_status.items():
+                enhanced_status["active_grids"][symbol] = {
+                    **grid_status,
+                    "smart_features": {
+                        "market_analysis": True,
+                        "adaptive_spacing": True,
+                        "dual_grid_system": True,
+                        "risk_management": True,
+                    },
+                }
+
+            return enhanced_status
+
+        except Exception as e:
+            self.logger.error(
+                f"❌ Failed to get grid status for client {client_id}: {e}"
+            )
+            return {"error": str(e)}
 
     def get_all_active_grids(self) -> Dict:
         """Get all active grids across all clients"""
         all_grids = {}
-        for client_id, client_grids in self.active_grids.items():
-            all_grids[client_id] = {}
-            for symbol, grid_config in client_grids.items():
-                all_grids[client_id][symbol] = grid_config.get_grid_status()
+
+    async def notify_fifo_trade_execution(
+        self, client_id: int, symbol: str, side: str, quantity: float, price: float
+    ):
+        """Notify FIFO service of trade execution"""
+        if hasattr(self, "fifo_service") and self.fifo_service:
+            try:
+                await self.fifo_service.on_trade_executed(
+                    client_id=client_id,
+                    symbol=symbol,
+                    side=side,
+                    quantity=quantity,
+                    price=price,
+                )
+                self.logger.info(
+                    f"📊 FIFO: {side} {quantity} {symbol} @ ${price:.4f} for client {client_id}"
+                )
+
+                # Get updated profit stats
+                if (
+                    hasattr(self.fifo_service, "monitors")
+                    and client_id in self.fifo_service.monitors
+                ):
+                    calculator = self.fifo_service.monitors[client_id]
+                    stats = calculator.calculate_fifo_profit(client_id)
+                    if stats["total_profit"] != 0:
+                        self.logger.info(
+                            f"💰 Client {client_id} FIFO Profit: ${stats['total_profit']:.2f}"
+                        )
+
+            except Exception as e:
+                self.logger.warning(f"FIFO notification failed: {e}")
+
+    def get_fifo_stats(self, client_id: int) -> dict:
+        """Get current FIFO stats for a client"""
+        try:
+            if hasattr(self, "fifo_service") and self.fifo_service:
+                if (
+                    hasattr(self.fifo_service, "monitors")
+                    and client_id in self.fifo_service.monitors
+                ):
+                    calculator = self.fifo_service.monitors[client_id]
+                    return calculator.calculate_fifo_profit(client_id)
+        except Exception as e:
+            self.logger.warning(f"Failed to get FIFO stats: {e}")
+
+        return {"total_profit": 0.0, "total_trades": 0, "win_rate": 0.0}
+
+        for client_id, manager in self.adaptive_managers.items():
+            try:
+                grids_status = manager.get_all_grids_status()
+
+                # FIFO Integration - Log grid start/trade activity
+                # Unified FIFO logging
+                if hasattr(self, "fifo_service"):
+                    self.fifo_service.log_trade(
+                        client_id, symbol, side, quantity, price, order_id
+                    )
+                if grids_status:
+                    all_grids[client_id] = {
+                        "client_id": client_id,
+                        "grids": grids_status,
+                        "trading_mode": "Smart Adaptive",
+                    }
+            except Exception as e:
+                self.logger.error(f"❌ Failed to get grids for client {client_id}: {e}")
+
         return all_grids
 
-    async def get_client_performance(self, client_id: int) -> Dict:
-        """Get performance statistics for a client"""
-        try:
-            # Get trade statistics from database
-            stats = self.trade_repo.get_client_trade_stats(client_id)
+    async def update_all_grids(self):
+        """Update all active adaptive grids"""
+        for client_id, manager in list(self.adaptive_managers.items()):
+            try:
+                # The adaptive manager handles its own monitoring
+                # We just need to update global performance
+                grids_status = manager.get_all_grids_status()
 
-            # Get current grid status
-            grid_status = self.get_client_grid_status(client_id)
+                # FIFO Integration - Log grid start/trade activity
+                # Unified FIFO logging
+                if hasattr(self, "fifo_service"):
+                    self.fifo_service.log_trade(
+                        client_id, symbol, side, quantity, price, order_id
+                    )
 
-            return {
-                "client_id": client_id,
-                "total_trades": stats.get("total_trades", 0),
-                "total_profit": stats.get("total_profit", 0.0),
-                "total_volume": stats.get("total_volume", 0.0),
-                "win_rate": stats.get("win_rate", 0.0),
-                "active_grids": grid_status.get("active_grids", {}),
-                "recent_trades": stats.get("recent_trades", []),
-            }
+                # Update global stats
+                total_trades = 0
+                total_profit = 0.0
 
-        except Exception as e:
-            self.logger.error(
-                f"❌ Error getting performance for client {client_id}: {e}"
-            )
-            return {"error": str(e)}
+                for grid_status in grids_status.values():
+                    if grid_status.get("active"):
+                        metrics = grid_status.get("performance_metrics", {})
+                        total_trades += metrics.get("total_trades", 0)
+                        total_profit += metrics.get("total_profit", 0.0)
+
+                self.global_performance.update(
+                    {"total_trades": total_trades, "total_profit": total_profit}
+                )
+
+            except Exception as e:
+                self.logger.error(
+                    f"❌ Failed to update grids for client {client_id}: {e}"
+                )
 
     async def shutdown_all_grids(self):
-        """Gracefully shutdown all grids"""
-        self.logger.info("🛑 Shutting down all grids...")
+        """Gracefully shutdown all adaptive grids"""
+        self.logger.info("🛑 Shutting down all smart adaptive grids...")
 
-        for client_id in list(self.active_grids.keys()):
+        for client_id in list(self.adaptive_managers.keys()):
             try:
                 await self.stop_all_client_grids(client_id)
             except Exception as e:
                 self.logger.error(
-                    f"Error shutting down grids for client {client_id}: {e}"
+                    f"❌ Failed to shutdown grids for client {client_id}: {e}"
                 )
 
-        # Clear all clients
+        # Clear all connections
         self.binance_clients.clear()
-        self.active_grids.clear()
+        self.adaptive_managers.clear()
+        self.market_analysis_services.clear()
 
-        self.logger.info("✅ All grids shut down")
+        self.logger.info("✅ All smart adaptive grids shut down")
+
+    async def get_market_overview(self) -> Dict:
+        """Get market overview with proper error handling"""
+        try:
+            # Get all unique symbols being traded
+            symbols = set()
+            for manager in self.adaptive_managers.values():
+                try:
+                    grids_status = manager.get_all_grids_status()
+
+                    # FIFO Integration - Log grid start/trade activity
+                    # Unified FIFO logging
+                    if hasattr(self, "fifo_service"):
+                        self.fifo_service.log_trade(
+                            client_id, symbol, side, quantity, price, order_id
+                        )
+                        symbols.update(grids_status.keys())
+                except Exception as e:
+                    self.logger.warning(f"Failed to get grid status from manager: {e}")
+
+            if not symbols:
+                return {
+                    "error": "No active trading pairs found",
+                    "timestamp": datetime.now().isoformat(),
+                    "symbols_tracked": 0,
+                    "global_performance": self.global_performance,
+                }
+
+            # Get market conditions for each symbol
+            market_overview = {}
+
+            # Use any available market analysis service
+            market_service = None
+            for service in self.market_analysis_services.values():
+                market_service = service
+                break
+
+            if not market_service:
+                return {
+                    "error": "Market analysis service not available",
+                    "timestamp": datetime.now().isoformat(),
+                    "symbols_tracked": len(symbols),
+                    "global_performance": self.global_performance,
+                }
+
+            for symbol in symbols:
+                try:
+                    condition = await market_service.get_market_condition(symbol)
+                    market_overview[symbol] = condition
+                except Exception as e:
+                    self.logger.warning(
+                        f"❌ Failed to get market condition for {symbol}: {e}"
+                    )
+                    # Provide fallback condition
+                    market_overview[symbol] = {
+                        "condition": "neutral",
+                        "score": 0.5,
+                        "confidence": 0.0,
+                        "error": f"Analysis failed: {str(e)}",
+                    }
+
+            return {
+                "timestamp": datetime.now().isoformat(),
+                "symbols_tracked": len(symbols),
+                "market_conditions": market_overview,
+                "global_performance": self.global_performance,
+            }
+
+        except Exception as e:
+            self.logger.error(f"❌ Failed to get market overview: {e}")
+            return {
+                "error": f"Market overview failed: {str(e)}",
+                "timestamp": datetime.now().isoformat(),
+                "symbols_tracked": 0,
+                "global_performance": self.global_performance,
+            }
+
+    async def optimize_all_grids(self):
+        """Optimize all active grids based on performance"""
+        try:
+            optimization_results = {}
+
+            for client_id, manager in self.adaptive_managers.items():
+                try:
+                    grids_status = manager.get_all_grids_status()
+
+                    # FIFO Integration - Log grid start/trade activity
+                    # Unified FIFO logging
+                    if hasattr(self, "fifo_service"):
+                        self.fifo_service.log_trade(
+                            client_id, symbol, side, quantity, price, order_id
+                        )
+
+                    for symbol, grid_status in grids_status.items():
+                        if grid_status.get("active"):
+                            # Analyze performance
+                            performance = grid_status.get("performance_metrics", {})
+
+                            # Optimization recommendations
+                            recommendations = []
+
+                            # Check efficiency
+                            efficiency = performance.get("efficiency_score", 0.0)
+                            if efficiency < 0.5:
+                                recommendations.append(
+                                    "Consider adjusting grid spacing"
+                                )
+
+                            # Check risk levels
+                            risk_score = performance.get("risk_score", 0.0)
+                            if risk_score > 0.7:
+                                recommendations.append(
+                                    "Consider reducing position sizes"
+                                )
+
+                            # Check market adaptation
+                            adaptations = performance.get("market_adaptations", 0)
+                            if adaptations > 10:
+                                recommendations.append(
+                                    "Market highly volatile, consider wider grids"
+                                )
+
+                            optimization_results[f"{client_id}_{symbol}"] = {
+                                "performance": performance,
+                                "recommendations": recommendations,
+                            }
+
+                except Exception as e:
+                    self.logger.error(
+                        f"❌ Failed to optimize grids for client {client_id}: {e}"
+                    )
+
+            return optimization_results
+
+        except Exception as e:
+            self.logger.error(f"❌ Grid optimization failed: {e}")
+            return {"error": str(e)}

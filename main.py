@@ -2,7 +2,7 @@
 """
 GridTrader Pro - Simplified Client Service
 Production-ready grid trading for paying clients
-WITH INTEGRATED NETWORK RECOVERY
+WITH PHASE 4 ENHANCED NETWORK RECOVERY
 """
 
 import asyncio
@@ -22,22 +22,15 @@ from telegram.ext import (
 
 from config import Config
 from database.db_setup import DatabaseSetup
-from handlers.smart_client_handler import SmartClientHandler
-from services.enhanced_grid_orchestrator import EnhancedGridOrchestrator
-from utils.network_recovery import create_network_recovery_service
-
-# FIFO Profit Monitoring Integration
-try:
-    from utils.fifo_telegram_monitor import FIFOMonitoringService
-
-    FIFO_AVAILABLE = True
-except ImportError:
-    print("⚠️ FIFO monitoring not available - install analytics dependencies")
-    FIFO_AVAILABLE = False
+from handlers.client_handler import ClientHandler
+from services.fifo_service import FIFOService
+from services.grid_orchestrator import GridOrchestrator
+from utils.network_recovery import EnhancedNetworkRecovery
+from utils.network_utils import NetworkUtils
 
 
 class GridTradingService:
-    """Simplified Grid Trading Service for Paying Clients with Network Recovery"""
+    """Simplified Grid Trading Service with Phase 4 Enhanced Network Recovery Only"""
 
     def __init__(self):
         self.config = Config()
@@ -45,38 +38,36 @@ class GridTradingService:
 
         # Initialize components
         self.db_setup = DatabaseSetup()
-        self.grid_orchestrator = EnhancedGridOrchestrator()
-        self.handler = SmartClientHandler()
+        self.grid_orchestrator = GridOrchestrator()
+        self.handler = ClientHandler()
 
-        # Network Recovery Integration (NEW)
-        self.network_service = create_network_recovery_service()
+        # Enhanced Network Recovery (Phase 4 - ONLY NETWORK RECOVERY SYSTEM)
+        self.network_recovery = EnhancedNetworkRecovery()
 
-        # FIFO Profit Monitoring (NEW)
-        if FIFO_AVAILABLE:
-            self.fifo_service = FIFOMonitoringService()
-        else:
-            self.fifo_service = None
+        # FIFO Profit Monitoring (Phase 3)
+        self.fifo_service = FIFOService()
+
         self.last_health_check = datetime.now()
-        self.health_check_interval = timedelta(minutes=5)  # Check every 5 minutes
+        self.health_check_interval = timedelta(minutes=5)
 
         # Service state
         self.running = False
         self.telegram_app = None
 
         self.logger.info(
-            "🤖 GridTrader Pro Client Service initialized with Network Recovery"
+            "🤖 GridTrader Pro Client Service initialized with Enhanced Network Recovery"
         )
 
     def _setup_logging(self) -> logging.Logger:
-        """Setup logging configuration"""
+        """Setup logging configuration - FIXED"""
         Path("data/logs").mkdir(parents=True, exist_ok=True)
 
         logging.basicConfig(
-            level=getattr(logging, self.config.LOG_LEVEL),
+            level=logging.INFO,
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
             handlers=[
-                logging.FileHandler(self.config.LOG_FILE),
-                logging.StreamHandler(sys.stdout),
+                logging.FileHandler("data/logs/gridtrader_service.log"),
+                logging.StreamHandler(),
             ],
         )
         return logging.getLogger(__name__)
@@ -91,30 +82,36 @@ class GridTradingService:
             raise
 
     async def _startup_checks(self):
-        """Perform startup connectivity and health checks (NEW)"""
+        """Perform startup connectivity and health checks"""
         self.logger.info("🔍 Performing startup connectivity checks...")
 
-        # Check network connectivity before starting
-        connectivity_ok = await self.network_service.startup_connectivity_check()
+        # Enhanced health check (Phase 4)
+        health_ok = await self.network_recovery.health_check()
 
-        if not connectivity_ok:
+        if not health_ok:
             self.logger.warning("⚠️ Some network services are offline")
             self.logger.warning("Bot will start but may have limited functionality")
         else:
             self.logger.info("✅ All network services operational")
 
-        return connectivity_ok
+        # Log initial health status
+        health_status = self.network_recovery.get_health_status()
+        self.logger.info(
+            f"📊 Network Health: {health_status['status']} ({health_status['uptime_percentage']:.1f}% uptime)"
+        )
+
+        return health_ok
 
     async def _periodic_health_check(self):
-        """Perform periodic health check if interval has passed (NEW)"""
+        """Perform periodic health check if interval has passed"""
         now = datetime.now()
 
         if now - self.last_health_check >= self.health_check_interval:
             self.last_health_check = now
 
             try:
-                # Run comprehensive health check
-                health_ok = await self.network_service.periodic_health_check()
+                # Enhanced health check (Phase 4)
+                health_ok = await self.network_recovery.health_check()
 
                 if not health_ok:
                     self.logger.critical(
@@ -122,31 +119,30 @@ class GridTradingService:
                     )
 
                     # Check if we should trigger emergency stop
-                    emergency = await self.network_service.check_emergency_conditions()
-                    if emergency:
+                    if self.network_recovery.is_emergency_stop_needed():
                         self.logger.critical("🚨 Network emergency stop triggered")
-                        return False  # Signal to stop the service
+                        return False
 
-                # Log network status
-                health_status = self.network_service.get_network_health_display()
-                self.logger.info(f"📊 {health_status}")
-
-            except Exception as e:
-                # Don't let health check failures crash the bot
-                self.logger.error(f"Health check error: {e}")
-                await self.network_service.health_monitor.handle_network_error(
-                    e, "periodic_health_check"
+                # Enhanced status logging
+                health_status = self.network_recovery.get_health_status()
+                self.logger.info(
+                    f"📊 Network Health: {health_status['status']} ({health_status['uptime_percentage']:.1f}% uptime)"
                 )
 
-        return True  # Continue operation
+            except Exception as e:
+                # Enhanced error handling
+                await self.network_recovery._handle_failure("health_check", None, e)
+                self.logger.error(f"Health check error: {e}")
+
+        return True
 
     async def grid_management_loop(self):
         """Enhanced grid management loop with network recovery"""
-        self.logger.info("🔄 Starting grid management loop with network recovery")
+        self.logger.info("🔄 Starting enhanced grid management loop")
 
         while self.running:
             try:
-                # Periodic health check (NEW)
+                # Health check
                 health_ok = await self._periodic_health_check()
                 if not health_ok:
                     self.logger.critical(
@@ -155,107 +151,133 @@ class GridTradingService:
                     self.running = False
                     break
 
-                # Update all active grids (wrapped with network recovery)
+                # Emergency stop check
+                if self.network_recovery.is_emergency_stop_needed():
+                    self.logger.critical(
+                        "🚨 Emergency stop triggered by network conditions"
+                    )
+                    await self._emergency_shutdown()
+                    self.running = False
+                    break
+
+                # Update all active grids with enhanced error handling
                 try:
-                    await self._safe_grid_update()
-                except Exception as e:
-                    # Enhanced error handling with network context
-                    await self.network_service.health_monitor.handle_network_error(
-                        e, "grid_update"
+                    # Use NetworkUtils for enhanced reliability
+                    await NetworkUtils.safe_request(
+                        self._safe_grid_update, max_retries=3, base_delay=2.0
                     )
 
-                    # Check if this is a network-related emergency
-                    emergency = await self.network_service.check_emergency_conditions()
-                    if emergency:
+                except Exception as e:
+                    # Enhanced error handling
+                    await self.network_recovery._handle_failure("grid_update", None, e)
+
+                    # Check for emergency conditions
+                    if self.network_recovery.is_emergency_stop_needed():
                         self.logger.critical(
                             "🚨 Grid update emergency - stopping service"
                         )
                         self.running = False
                         break
 
-                    # Log error and continue
                     self.logger.error(f"Grid update error: {e}")
 
-                # Log status every 5 minutes (your existing pattern)
+                # Enhanced status logging
                 active_grids = self.grid_orchestrator.get_all_active_grids()
                 if active_grids:
-                    self.logger.info(f"📊 Managing {len(active_grids)} active grids")
+                    health_status = self.network_recovery.get_health_status()
+                    self.logger.info(
+                        f"📊 Managing {len(active_grids)} active grids - "
+                        f"Network Health: {health_status['status']} ({health_status['uptime_percentage']:.1f}% uptime)"
+                    )
 
-                # Wait 30 seconds before next update (your existing pattern)
                 await asyncio.sleep(30)
 
             except Exception as e:
-                # Top-level error handling with network recovery
-                await self.network_service.health_monitor.handle_network_error(
-                    e, "grid_management_loop"
+                # Top-level enhanced error handling
+                await self.network_recovery._handle_failure(
+                    "grid_management_loop", None, e
                 )
-
                 self.logger.error(f"Error in grid management loop: {e}")
-                await asyncio.sleep(60)  # Wait longer on error
+                await asyncio.sleep(60)
 
     async def _safe_grid_update(self):
-        """Grid update wrapped with network recovery (NEW)"""
+        """Grid update wrapped with network recovery"""
         try:
             # Your existing grid update logic
             await self.grid_orchestrator.update_all_grids()
 
-            # Signal successful network operation
-            await self.network_service.health_monitor.handle_network_success(
-                "grid_update"
-            )
+            # Signal successful operation
+            await self.network_recovery._handle_success("grid_update", None, 0.5)
 
         except Exception as e:
             # Let the calling function handle the error
             raise e
 
+    async def _emergency_shutdown(self):
+        """Emergency shutdown procedure"""
+        self.logger.critical("🚨 Initiating emergency shutdown...")
+
+        try:
+            # Stop all grids with enhanced retry logic
+            await NetworkUtils.safe_request(
+                self.grid_orchestrator.shutdown_all_grids,
+                max_retries=10,
+                base_delay=5.0,
+            )
+
+            self.logger.critical("🛑 Emergency shutdown complete")
+
+        except Exception as e:
+            self.logger.critical(f"❌ Emergency shutdown failed: {e}")
+
     async def telegram_start(self, update, context):
-        """Handle /start command with network recovery"""
+        """Handle /start command with enhanced network recovery"""
         try:
             await self.handler.handle_start(update, context)
 
-            # Signal successful Telegram operation
-            await self.network_service.health_monitor.handle_network_success(
-                "telegram_start"
+            # Signal successful operation
+            await self.network_recovery._handle_success(
+                "telegram_start", update.effective_user.id, 0.1
             )
 
         except Exception as e:
             # Enhanced error handling for Telegram operations
-            await self.network_service.health_monitor.handle_network_error(
-                e, "telegram_start"
+            await self.network_recovery._handle_failure(
+                "telegram_start", update.effective_user.id, e
             )
             self.logger.error(f"Error in start handler: {e}")
 
     async def telegram_callback(self, update, context):
-        """Handle callback queries with network recovery"""
+        """Handle callback queries with enhanced network recovery"""
         try:
             await self.handler.handle_callback(update, context)
 
-            # Signal successful Telegram operation
-            await self.network_service.health_monitor.handle_network_success(
-                "telegram_callback"
+            # Signal successful operation
+            await self.network_recovery._handle_success(
+                "telegram_callback", update.effective_user.id, 0.1
             )
 
         except Exception as e:
             # Enhanced error handling for Telegram operations
-            await self.network_service.health_monitor.handle_network_error(
-                e, "telegram_callback"
+            await self.network_recovery._handle_failure(
+                "telegram_callback", update.effective_user.id, e
             )
             self.logger.error(f"Error in callback handler: {e}")
 
     async def telegram_message(self, update, context):
-        """Handle text messages with network recovery"""
+        """Handle text messages with enhanced network recovery"""
         try:
             await self.handler.handle_message(update, context)
 
-            # Signal successful Telegram operation
-            await self.network_service.health_monitor.handle_network_success(
-                "telegram_message"
+            # Signal successful operation
+            await self.network_recovery._handle_success(
+                "telegram_message", update.effective_user.id, 0.1
             )
 
         except Exception as e:
             # Enhanced error handling for Telegram operations
-            await self.network_service.health_monitor.handle_network_error(
-                e, "telegram_message"
+            await self.network_recovery._handle_failure(
+                "telegram_message", update.effective_user.id, e
             )
             self.logger.error(f"Error in message handler: {e}")
 
@@ -298,9 +320,10 @@ class GridTradingService:
         # Add Telegram bot task if configured
         if self.telegram_app:
             try:
-                # Initialize and start Telegram bot
-                await self.telegram_app.initialize()
-                await self.telegram_app.start()
+                # Initialize and start Telegram bot with enhanced error handling
+                await NetworkUtils.safe_request(
+                    self._start_telegram_bot, max_retries=5, base_delay=3.0
+                )
 
                 # Create polling task
                 telegram_task = asyncio.create_task(
@@ -312,9 +335,7 @@ class GridTradingService:
 
             except Exception as e:
                 # Enhanced Telegram startup error handling
-                await self.network_service.health_monitor.handle_network_error(
-                    e, "telegram_startup"
-                )
+                await self.network_recovery._handle_failure("telegram_startup", None, e)
                 self.logger.error(f"Failed to start Telegram bot: {e}")
                 self.logger.info("🤖 Continuing with grid management only")
         else:
@@ -327,13 +348,16 @@ class GridTradingService:
             self.logger.info("🛑 Service stopped by user")
         except Exception as e:
             # Enhanced top-level error handling
-            await self.network_service.health_monitor.handle_network_error(
-                e, "service_runtime"
-            )
+            await self.network_recovery._handle_failure("service_runtime", None, e)
             self.logger.error(f"❌ Service error: {e}")
         finally:
             # Cleanup
             await self.stop_service()
+
+    async def _start_telegram_bot(self):
+        """Start Telegram bot with enhanced error handling"""
+        await self.telegram_app.initialize()
+        await self.telegram_app.start()
 
     async def stop_service(self):
         """Stop the service gracefully"""
@@ -361,7 +385,7 @@ class GridTradingService:
     async def start_async(self):
         """Enhanced async start method with network recovery"""
         self.logger.info(
-            "🚀 Starting GridTrader Pro Client Service with Network Recovery"
+            "🚀 Starting GridTrader Pro Client Service with Enhanced Network Recovery"
         )
 
         try:
@@ -377,9 +401,8 @@ class GridTradingService:
             await self.run_service()
 
         except Exception as e:
-            await self.network_service.health_monitor.handle_network_error(
-                e, "service_startup"
-            )
+            # Enhanced startup error handling
+            await self.network_recovery._handle_failure("service_startup", None, e)
             self.logger.error(f"❌ Startup error: {e}")
             raise
 
@@ -393,9 +416,9 @@ class GridTradingService:
                 )
                 active_clients = [row[0] for row in cursor.fetchall()]
 
-            # Add FIFO monitoring for each client
+            # Initialize FIFO monitoring using the new FIFOService
             for client_id in active_clients:
-                await self.fifo_service.add_client_monitor(client_id)
+                self.fifo_service.calculate_fifo_performance(client_id)
 
             self.logger.info(
                 f"✅ FIFO monitoring initialized for {len(active_clients)} clients"
@@ -417,9 +440,11 @@ class GridTradingService:
             self.running = False
 
     def get_service_status(self):
-        """Get comprehensive service status including network health (NEW)"""
+        """Get comprehensive service status including enhanced network health"""
         try:
-            network_health = self.network_service.get_network_health_display()
+            # Enhanced network health
+            health_status = self.network_recovery.get_health_status()
+
             active_grids = (
                 len(self.grid_orchestrator.get_all_active_grids())
                 if hasattr(self.grid_orchestrator, "get_all_active_grids")
@@ -428,17 +453,24 @@ class GridTradingService:
 
             return {
                 "running": self.running,
-                "network_health": network_health,
+                "network_health": health_status,
                 "active_grids": active_grids,
                 "telegram_bot": self.telegram_app is not None,
                 "last_health_check": self.last_health_check.isoformat(),
+                "emergency_stop_needed": self.network_recovery.is_emergency_stop_needed(),
+                "total_network_requests": health_status.get("total_requests", 0),
+                "network_uptime_percentage": health_status.get(
+                    "uptime_percentage", 100.0
+                ),
+                "network_status": health_status.get("status", "unknown"),
+                "consecutive_failures": health_status.get("consecutive_failures", 0),
             }
         except Exception as e:
             return {"error": str(e)}
 
 
 def main():
-    """Entry point"""
+    """Entry point - Clean Phase 4 Implementation"""
     # Validate configuration
     if not Config.validate():
         print("❌ Invalid configuration. Please check your environment variables.")
@@ -449,8 +481,13 @@ def main():
     print("✅ Real trading only - no trials or demos")
     print("✅ Client API key management")
     print("✅ Professional grid trading")
+    print("✅ Smart client handler (Phase 2)")
+    print("✅ Clean time sync (Phase 1)")
+    print("✅ Unified FIFO service (Phase 3)")
+    print("✅ Enhanced network recovery (Phase 4)")
+    print("✅ Emergency stop protection")
+    print("✅ Comprehensive health monitoring")
     print("✅ Telegram interface")
-    print("✅ Network recovery enabled")  # NEW
     print("✅ Production ready")
     print("=" * 50)
 
