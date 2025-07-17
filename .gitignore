@@ -263,21 +263,3 @@ build/
 dist/
 *.egg-info/
 *.egg
-
-# Consolidated cleanup additions
-*.pre_consolidation
-*.backup
-debug_*.py
-validate_*.py
-*_test.py
-temp_*.py
-
-# Prevent cache buildup
-**/__pycache__/
-*.cpython-*
-.pytest_cache/
-
-# Development files
-.cleanup_backup_location
-debug_report.txt
-deployment.log
