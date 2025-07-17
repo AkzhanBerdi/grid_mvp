@@ -4,7 +4,9 @@ Telegram Notifier Service for GridTrader Pro
 """
 
 import logging
+
 import requests
+
 from config import Config
 
 

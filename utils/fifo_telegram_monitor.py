@@ -4,13 +4,12 @@ Focused FIFO Profit Telegram Monitor for GridTrader Pro
 Integrates with existing database and trade execution flow
 """
 
-import asyncio
-import logging
-import sqlite3
-import time
 from collections import deque
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
+import logging
+import sqlite3
+import time
 
 import requests
 

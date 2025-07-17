@@ -4,10 +4,10 @@ Unified FIFO Service - FIXED VERSION
 Consolidates all FIFO-related functionality into single service
 """
 
-import logging
-import sqlite3
 from datetime import datetime
 from typing import Dict, Optional
+import logging
+import sqlite3
 
 from analytics.fifo_profit_tracker import FIFOProfitTracker
 from config import Config

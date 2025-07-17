@@ -16,9 +16,9 @@ Key Benefits:
 - Reduces risk during losing streaks
 """
 
+from typing import Dict
 import logging
 import time
-from typing import Dict
 
 import numpy as np
 

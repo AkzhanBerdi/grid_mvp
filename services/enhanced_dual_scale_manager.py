@@ -4,10 +4,10 @@ Enhanced Dual Scale Grid Manager with Advanced Features Integration
 Replaces temporary implementations with full OOP advanced trading features
 """
 
+from typing import Dict
 import asyncio
 import logging
 import time
-from typing import Dict
 
 from binance.client import Client
 
@@ -855,7 +855,6 @@ class EnhancedDualScaleGridManager:
         """
         try:
             # Get latest FIFO performance
-            from services.fifo_service import FIFOService
 
             fifo_service = FIFOService()
             fifo_performance = fifo_service.calculate_fifo_performance(self.client_id)

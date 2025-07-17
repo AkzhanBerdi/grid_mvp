@@ -5,13 +5,13 @@ Production-ready grid trading for paying clients
 WITH PHASE 4 ENHANCED NETWORK RECOVERY - COMPLETE FIXED VERSION
 """
 
+from datetime import datetime, timedelta
+from pathlib import Path
 import asyncio
 import logging
 import os
 import sqlite3
 import sys
-from datetime import datetime, timedelta
-from pathlib import Path
 
 from telegram.ext import (
     Application,
@@ -48,9 +48,9 @@ class GridTradingService:
         if ADVANCED_FEATURES_ENABLED:
             try:
                 # Use Enhanced Grid Orchestrator with Advanced Features
-                from services.enhanced_grid_orchestrator import EnhancedGridOrchestrator
+                from services.grid_orchestrator import GridOrchestrator
 
-                self.grid_orchestrator = EnhancedGridOrchestrator()
+                self.grid_orchestrator = GridOrchestrator()
                 self.logger.info(
                     "🚀 ADVANCED FEATURES ENABLED - Enhanced Grid Orchestrator loaded"
                 )
@@ -62,7 +62,6 @@ class GridTradingService:
                 self.grid_orchestrator = GridOrchestrator()
         else:
             # Use Standard Grid Orchestrator
-            from services.grid_orchestrator import GridOrchestrator
 
             self.grid_orchestrator = GridOrchestrator()
             self.logger.info("📊 Standard Grid Orchestrator loaded")
@@ -655,7 +654,6 @@ class GridTradingService:
 
             # Send grid start notification through the monitoring service
             try:
-                from services.telegram_notifier import TelegramNotifier
 
                 notifier = TelegramNotifier()
 

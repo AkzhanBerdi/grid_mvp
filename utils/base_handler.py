@@ -4,8 +4,8 @@ Base Client Handler - FIXED VERSION
 Eliminates 80% of duplicate code and fixes await issue
 """
 
-import logging
 from typing import List, Optional
+import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 

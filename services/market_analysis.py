@@ -1,13 +1,13 @@
 # services/market_analysis.py - FIXED VERSION
 """Fixed Market Analysis Service with Better Error Handling"""
 
-import logging
-import time
 from datetime import datetime
 from typing import Dict, Optional
+import logging
+import time
 
-import numpy as np
 from binance.client import Client
+import numpy as np
 
 
 class MarketCondition:

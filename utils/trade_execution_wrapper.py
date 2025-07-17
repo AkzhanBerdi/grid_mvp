@@ -4,7 +4,6 @@ Trade execution wrapper to ensure FIFO logging happens
 """
 
 import logging
-from typing import Optional
 
 
 class TradeExecutionWrapper:

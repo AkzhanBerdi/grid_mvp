@@ -1,10 +1,10 @@
 # database/db_setup.py
 """Simplified database setup for client grid trading service"""
 
+from pathlib import Path
 import logging
 import sqlite3
 import sys
-from pathlib import Path
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))

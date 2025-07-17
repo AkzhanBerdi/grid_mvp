@@ -1,10 +1,11 @@
 # models/client.py - FIXED VERSION
 """Fixed Client model with proper database schema compatibility"""
 
-from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
 from typing import List, Optional
+
+from dataclasses import dataclass, field
+from enum import Enum
 
 
 class ClientStatus(Enum):

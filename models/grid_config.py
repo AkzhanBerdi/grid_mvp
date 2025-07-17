@@ -1,8 +1,9 @@
 # models/grid_config.py
 """Grid trading configuration"""
 
-from dataclasses import dataclass
 from typing import Dict, List
+
+from dataclasses import dataclass
 
 
 @dataclass

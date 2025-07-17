@@ -1,9 +1,9 @@
 # services/performance_calculator.py
 """Fixed Performance Calculator for Grid Trading"""
 
-import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
+import logging
 
 from repositories.trade_repository import TradeRepository
 

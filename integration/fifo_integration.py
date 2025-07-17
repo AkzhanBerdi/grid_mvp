@@ -4,9 +4,9 @@ Integration script to add FIFO profit tracking to existing GridTrader Pro
 Modifies your existing TradeRepository and monitoring system
 """
 
+from datetime import datetime, timedelta
 import logging
 import sqlite3
-from datetime import datetime, timedelta
 
 from analytics.fifo_profit_tracker import FIFOProfitTracker, PerformanceMonitor
 from config import Config
@@ -248,7 +248,6 @@ class EnhancedMonitoringDashboard:
     
     def __init__(self):
         self.performance_monitor = PerformanceMonitor()
-        from repositories.client_repository import ClientRepository
         self.client_repo = ClientRepository()
         self.logger = logging.getLogger(__name__)
 
@@ -401,7 +400,6 @@ class FIFOMigration:
             fifo_tracker = FIFOProfitTracker()
             
             # Get a test client
-            from repositories.client_repository import ClientRepository
             client_repo = ClientRepository()
             active_clients = client_repo.get_all_active_clients()
             
@@ -422,7 +420,6 @@ class FIFOMigration:
             print("\n3️⃣ Testing performance monitoring...")
             performance_monitor = PerformanceMonitor()
             if active_clients:
-                import asyncio
                 performance = asyncio.run(
                     performance_monitor.monitor_client_performance(active_clients[0])
                 )

@@ -4,12 +4,13 @@ Enhanced FIFO-based profit tracking and performance monitoring
 Integrates with your existing GridTrader Pro setup
 """
 
-import logging
-import sqlite3
 from collections import defaultdict, deque
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
+import logging
+import sqlite3
+
+from dataclasses import dataclass
 
 from config import Config
 

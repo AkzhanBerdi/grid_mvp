@@ -1,8 +1,8 @@
 # utils/validators.py
 """Input validation utilities"""
 
-import re
 from typing import Optional, Tuple
+import re
 
 
 class Validators:

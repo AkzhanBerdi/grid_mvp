@@ -1,11 +1,11 @@
 # services/dual_scale_grid_manager.py
 """Smart 35/65 Dual-Scale Grid System - FIXED TIMESTAMP AND API ISSUES"""
 
+from datetime import datetime
+from typing import Dict, Tuple
 import asyncio
 import logging
 import time
-from datetime import datetime
-from typing import Dict, Tuple
 
 from binance.client import Client
 
@@ -1616,7 +1616,6 @@ class DualScaleGridManager:
 
             # Send immediate trade notification for significant trades
             if side == "SELL" and total_value >= 50.0:  # Notify sells over $50
-                from services.telegram_notifier import TelegramNotifier
 
                 notifier = TelegramNotifier()
 
