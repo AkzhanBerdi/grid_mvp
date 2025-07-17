@@ -15,29 +15,56 @@ from repositories.trade_repository import TradeRepository
 from services.compound_interest_manager import CompoundIntegrationService
 from services.fifo_service import FIFOService
 from services.market_analysis import MarketAnalysisService, MarketCondition
+from services.volatility_order_sizer import (
+    VolatilityCompoundIntegration,
+    VolatilityOrderSizer,
+)
 
 """
 INTEGRATION EXAMPLE:
 ===================
 
-# In your DualScaleGridManager initialization:
-from services.compound_interest_manager import CompoundIntegrationService
+# In your DualScaleGridManager:
+from services.volatility_order_sizer import VolatilityOrderSizer, VolatilityCompoundIntegration
 
 class DualScaleGridManager:
     def __init__(self, binance_client, client_id):
-        # ... existing code ...
+        # ... existing compound manager setup ...
         
-        # Replace TemporaryOrderSizer with CompoundManager
-        self.fifo_service = FIFOService()
-        self.compound_service = CompoundIntegrationService(self.fifo_service)
-        self.order_sizer = self.compound_service.compound_manager
+        # Add volatility sizer
+        self.volatility_sizer = VolatilityOrderSizer()
         
-        # Initialize compound tracking
-        asyncio.create_task(self.compound_service.initialize_client(client_id))
+        # Create integrated optimizer
+        self.optimizer = VolatilityCompoundIntegration(
+            self.compound_service.compound_manager,
+            self.volatility_sizer
+        )
+    
+    async def start_dual_scale_grid(self, symbol: str, total_capital: float):
+        # Get fully optimized configuration
+        config = await self.optimizer.get_optimized_grid_config(
+            self.client_id, symbol, total_capital
+        )
+        
+        # Use optimized parameters
+        order_size = config['order_size']
+        grid_spacing = config['grid_spacing']
+        grid_levels = config['grid_levels']
+        allocation = config['allocation']
+        
+        self.logger.info(f"🎯 Using optimized config: {config['optimization_summary']}")
+        
+        # Continue with grid setup using optimized values...
 
-# In your trade execution:
-async def notify_trade_execution(self, client_id, symbol, side, quantity, price):
-    # ... existing notification code ..."""
+EXPECTED RESULTS:
+================
+- Order sizes automatically adjust to market volatility
+- Calm markets: 30% larger orders, tighter grids
+- Volatile markets: 40% smaller orders, wider grids  
+- Combined with compound interest for optimal growth
+- Real-time volatility monitoring and adjustment
+- Risk-appropriate grid level adjustments
+"""
 
 
 class DualScaleGridManager:
@@ -54,6 +81,11 @@ class DualScaleGridManager:
         # Initialize compound tracking
         asyncio.create_task(self.compound_service.initialize_client(client_id))
 
+        self.volatility_sizer = VolatilityOrderSizer()
+        # Create integrated optimizer
+        self.optimizer = VolatilityCompoundIntegration(
+            self.compound_service.compound_manager, self.volatility_sizer
+        )
         # future implementations from config
         self.market_timer = TemporaryMarketTimer()
         self.volatility_risk = TemporaryVolatilityRisk()
@@ -266,6 +298,21 @@ class DualScaleGridManager:
 
     async def start_dual_scale_grid(self, symbol: str, total_capital: float) -> Dict:
         """Start intelligent 35/65 dual-scale grid system - FIXED VERSION"""
+
+        # Get fully optimized configuration
+        config = await self.optimizer.get_optimized_grid_config(
+            self.client_id, symbol, total_capital
+        )
+
+        # Use optimized parameters
+        order_size = config["order_size"]
+        grid_spacing = config["grid_spacing"]
+        grid_levels = config["grid_levels"]
+        allocation = config["allocation"]
+
+        self.logger.info(f"🎯 Using optimized config: {config['optimization_summary']}")
+
+        # Continue with grid setup using optimized values...
         # Get dynamic allocation (replaces fixed BASE_ALLOCATION/ENHANCED_ALLOCATION)
         allocation = await self.order_sizer.get_grid_allocation(
             self.client_id, total_capital
