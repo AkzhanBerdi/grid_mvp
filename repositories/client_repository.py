@@ -1,10 +1,10 @@
 # repositories/client_repository.py - COMPLETELY FIXED VERSION
 """Client repository with FIXED field mapping and error handling"""
 
-from datetime import datetime
-from typing import Optional
 import logging
 import sqlite3
+from datetime import datetime
+from typing import Optional
 
 from config import Config
 from models.client import Client, ClientStatus, GridStatus

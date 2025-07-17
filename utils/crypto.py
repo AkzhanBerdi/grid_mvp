@@ -2,13 +2,13 @@
 
 """Enhanced encryption utilities with detailed error handling"""
 
+import base64
 import logging
+import traceback
 
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-import base64
-import traceback
 
 
 class CryptoUtils:
@@ -203,7 +203,6 @@ def debug_client_encryption(client_id: int):
 
                 # Try to understand the format
                 try:
-
                     decoded = base64.urlsafe_b64decode(client.binance_api_key)
                     print(f"   Base64 decode successful, length: {len(decoded)}")
                 except Exception as decode_err:

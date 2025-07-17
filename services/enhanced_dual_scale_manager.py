@@ -4,10 +4,10 @@ Enhanced Dual Scale Grid Manager with Advanced Features Integration
 Replaces temporary implementations with full OOP advanced trading features
 """
 
-from typing import Dict
 import asyncio
 import logging
 import time
+from typing import Dict
 
 from binance.client import Client
 

@@ -550,3 +550,4 @@ class DualScaleGridManager:
 # In your trade execution:
 async def notify_trade_execution(self, client_id, symbol, side, quantity, price):
     # ... existing notification code ...
+    

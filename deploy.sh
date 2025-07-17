@@ -141,3 +141,6 @@ echo "  View status:         docker-compose ps"
 echo ""
 echo "📊 Health check:       http://localhost:9090 (if monitoring enabled)"
 echo "📁 Backups saved in:   $BACKUP_DIR"
+
+
+#per commit

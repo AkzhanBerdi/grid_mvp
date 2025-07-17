@@ -263,3 +263,20 @@ build/
 dist/
 *.egg-info/
 *.egg
+
+# Debug and temporary files (don't commit)
+*.pre_consolidation
+.cleanup_backup_location
+debug_test_failures.py
+minimal_test.py
+fix_*.py
+immediate_fix.sh
+*_test.py
+
+# Test logs (generated files)
+test_logs/
+
+# Backup files
+*.backup
+*.bak
+

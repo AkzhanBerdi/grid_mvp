@@ -3,9 +3,9 @@
 Fixed Smart Analytics - Resolves negative profit confusion
 """
 
-from typing import Dict, List
 import logging
 import sqlite3
+from typing import Dict, List
 
 from config import Config
 
@@ -650,3 +650,4 @@ def test_fixes_with_current_data():
             "Encouraging user messaging",
         ],
     }
+

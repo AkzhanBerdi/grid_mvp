@@ -1,11 +1,10 @@
 # models/client.py - FIXED VERSION
 """Fixed Client model with proper database schema compatibility"""
 
-from datetime import datetime
-from typing import List, Optional
-
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
+from typing import List, Optional
 
 
 class ClientStatus(Enum):
@@ -77,3 +76,4 @@ class Client:
             self.order_size,
             self.total_capital / (len(self.trading_pairs) * self.grid_levels),
         )
+

@@ -1,9 +1,8 @@
 # models/grid_config.py
 """Grid trading configuration"""
 
-from typing import Dict, List
-
 from dataclasses import dataclass
+from typing import Dict, List
 
 
 @dataclass
@@ -153,3 +152,4 @@ from .client import Client, ClientStatus, GridStatus
 from .grid_config import GridConfig
 
 __all__ = ["Client", "ClientStatus", "GridStatus", "GridConfig"]
+

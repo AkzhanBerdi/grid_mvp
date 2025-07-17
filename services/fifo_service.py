@@ -4,10 +4,10 @@ Unified FIFO Service - FIXED VERSION
 Consolidates all FIFO-related functionality into single service
 """
 
-from datetime import datetime
-from typing import Dict, Optional
 import logging
 import sqlite3
+from datetime import datetime
+from typing import Dict, Optional
 
 from analytics.fifo_profit_tracker import FIFOProfitTracker
 from config import Config
@@ -392,3 +392,4 @@ class FIFOService:
         except Exception as e:
             self.logger.error(f"Error checking performance: {e}")
             return False
+

@@ -1,10 +1,9 @@
 # models/adaptive_grid_config.py
 """Adaptive Grid Configuration Model"""
 
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict
-
-from dataclasses import dataclass, field
 
 from config import Config
 from models.grid_config import GridConfig

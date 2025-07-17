@@ -49,3 +49,4 @@ Welcome back, {client.first_name}!
 📈 Risk Level: {client.risk_level.title()}{grid_info}
 
 **Quick Trading:** Type `ADA 1000` or `AVAX 500`"""
+

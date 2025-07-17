@@ -1,9 +1,10 @@
 # repositories/trade_repository.py
+
 """Trade repository for logging and analytics"""
 
-from typing import Dict, List
 import logging
 import sqlite3
+from typing import Dict, List
 
 from config import Config
 

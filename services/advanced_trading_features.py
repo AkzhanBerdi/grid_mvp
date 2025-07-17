@@ -1,17 +1,18 @@
 # services/advanced_trading_features.py
+
 """
 Advanced Trading Features Implementation
 Replaces temporary placeholders with full OOP implementations
 """
 
-from datetime import datetime
-from typing import Dict, List, Tuple
 import logging
 import time
+from datetime import datetime
+from typing import Dict, List, Tuple
 
-from binance.client import Client
 import numpy as np
 import pytz
+from binance.client import Client
 
 from config import Config
 from repositories.trade_repository import TradeRepository

@@ -1,9 +1,8 @@
 # models/bot_config.py
 """Bot configuration model"""
 
-from typing import Dict, List
-
 from dataclasses import asdict, dataclass
+from typing import Dict, List
 
 from config import Config
 
