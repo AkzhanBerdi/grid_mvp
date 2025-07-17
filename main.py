@@ -2,11 +2,12 @@
 """
 GridTrader Pro - Simplified Client Service
 Production-ready grid trading for paying clients
-WITH PHASE 4 ENHANCED NETWORK RECOVERY
+WITH PHASE 4 ENHANCED NETWORK RECOVERY - COMPLETE FIXED VERSION
 """
 
 import asyncio
 import logging
+import os
 import sqlite3
 import sys
 from datetime import datetime, timedelta
@@ -24,14 +25,17 @@ from config import Config
 from database.db_setup import DatabaseSetup
 from handlers.client_handler import ClientHandler
 from services.fifo_service import FIFOService
-from services.grid_orchestrator import GridOrchestrator
 from utils.fifo_telegram_monitor import FIFOMonitoringService
 from utils.network_recovery import EnhancedNetworkRecovery
 from utils.network_utils import NetworkUtils
 
+ADVANCED_FEATURES_ENABLED = (
+    os.environ.get("ADVANCED_FEATURES", "false").lower() == "true"
+)
+
 
 class GridTradingService:
-    """Simplified Grid Trading Service with Phase 4 Enhanced Network Recovery Only"""
+    """Complete Grid Trading Service with all required methods - FIXED VERSION"""
 
     def __init__(self):
         self.config = Config()
@@ -39,15 +43,54 @@ class GridTradingService:
 
         # Initialize components
         self.db_setup = DatabaseSetup()
-        self.grid_orchestrator = GridOrchestrator()
+
+        # ENHANCED GRID ORCHESTRATOR SELECTION
+        if ADVANCED_FEATURES_ENABLED:
+            try:
+                # Use Enhanced Grid Orchestrator with Advanced Features
+                from services.enhanced_grid_orchestrator import EnhancedGridOrchestrator
+
+                self.grid_orchestrator = EnhancedGridOrchestrator()
+                self.logger.info(
+                    "🚀 ADVANCED FEATURES ENABLED - Enhanced Grid Orchestrator loaded"
+                )
+            except ImportError as e:
+                self.logger.warning(f"Enhanced orchestrator not available: {e}")
+                self.logger.info("Falling back to standard orchestrator")
+                from services.grid_orchestrator import GridOrchestrator
+
+                self.grid_orchestrator = GridOrchestrator()
+        else:
+            # Use Standard Grid Orchestrator
+            from services.grid_orchestrator import GridOrchestrator
+
+            self.grid_orchestrator = GridOrchestrator()
+            self.logger.info("📊 Standard Grid Orchestrator loaded")
+
         self.handler = ClientHandler()
 
-        # Enhanced Network Recovery (Phase 4 - ONLY NETWORK RECOVERY SYSTEM)
+        # Enhanced Network Recovery (Phase 4)
         self.network_recovery = EnhancedNetworkRecovery()
 
         # FIFO Profit Monitoring (Phase 3)
         self.fifo_service = FIFOService()
         self.fifo_monitoring_service = FIFOMonitoringService()
+
+        # Error tracking
+        self._error_count = 0
+        self._last_successful_update = datetime.now()
+
+        # Enhanced startup message
+        if ADVANCED_FEATURES_ENABLED:
+            self.logger.info("🎯 GridTrader Pro Client Service with ADVANCED FEATURES")
+            self.logger.info("   💰 Compound Interest Management: ACTIVE")
+            self.logger.info("   ⏰ Intelligent Market Timing: ACTIVE")
+            self.logger.info("   🛡️ Volatility Risk Management: ACTIVE")
+            self.logger.info("   🔄 Smart Auto-Reset: ACTIVE")
+            self.logger.info("   🎯 Precision Order Handling: ACTIVE")
+            self.logger.info("   📊 Advanced Performance Monitoring: ACTIVE")
+        else:
+            self.logger.info("🤖 GridTrader Pro Client Service - Standard Mode")
 
         self.last_health_check = datetime.now()
         self.health_check_interval = timedelta(minutes=5)
@@ -61,7 +104,7 @@ class GridTradingService:
         )
 
     def _setup_logging(self) -> logging.Logger:
-        """Setup logging configuration - FIXED"""
+        """Setup logging configuration"""
         Path("data/logs").mkdir(parents=True, exist_ok=True)
 
         logging.basicConfig(
@@ -138,6 +181,56 @@ class GridTradingService:
 
         return True
 
+    async def _get_next_check_interval(self) -> float:
+        """Get dynamic check interval based on market conditions"""
+        try:
+            # If advanced features are enabled, use intelligent market timing
+            if hasattr(self, "grid_orchestrator") and hasattr(
+                self.grid_orchestrator, "adaptive_managers"
+            ):
+                # Check if any managers have market timing
+                for manager in self.grid_orchestrator.adaptive_managers.values():
+                    if hasattr(manager, "market_timer"):
+                        return manager.market_timer.get_optimal_check_interval(30.0)
+
+            # Base interval depends on system health
+            health_status = self.network_recovery.get_health_status()
+
+            if health_status["status"] == "healthy":
+                return 30.0  # Normal interval
+            elif health_status["consecutive_failures"] > 2:
+                return 60.0  # Slower checks if having issues
+            else:
+                return 45.0  # Moderate interval
+
+        except Exception as e:
+            self.logger.error(f"Error getting check interval: {e}")
+            return 30.0  # Safe fallback
+
+    async def _get_error_backoff_interval(self) -> float:
+        """Get progressive backoff interval for errors"""
+        try:
+            self._error_count += 1
+
+            # Exponential backoff: 60, 120, 180, 240, 300 (max)
+            interval = min(60 * self._error_count, 300)
+
+            self.logger.info(
+                f"Error backoff interval: {interval}s (error #{self._error_count})"
+            )
+            return interval
+
+        except Exception as e:
+            self.logger.error(f"Error calculating backoff: {e}")
+            return 60.0  # Safe fallback
+
+    def _reset_error_count(self):
+        """Reset error count on successful operations"""
+        if self._error_count > 0:
+            self.logger.info(f"✅ Resetting error count (was {self._error_count})")
+            self._error_count = 0
+        self._last_successful_update = datetime.now()
+
     async def grid_management_loop(self):
         """Enhanced grid management loop with network recovery"""
         self.logger.info("🔄 Starting enhanced grid management loop")
@@ -169,6 +262,9 @@ class GridTradingService:
                         self._safe_grid_update, max_retries=3, base_delay=2.0
                     )
 
+                    # Reset error count on success
+                    self._reset_error_count()
+
                 except Exception as e:
                     # Enhanced error handling
                     await self.network_recovery._handle_failure("grid_update", None, e)
@@ -184,20 +280,28 @@ class GridTradingService:
                     self.logger.error(f"Grid update error: {e}")
 
                 # Enhanced status logging
-                active_grids = self.grid_orchestrator.get_all_active_grids()
-                if active_grids:
-                    health_status = self.network_recovery.get_health_status()
-                    self.logger.info(
-                        f"📊 Managing {len(active_grids)} active grids - "
-                        f"Network Health: {health_status['status']} ({health_status['uptime_percentage']:.1f}% uptime)"
-                    )
+                try:
+                    active_grids = self.grid_orchestrator.get_all_active_grids()
+                    if active_grids:
+                        health_status = self.network_recovery.get_health_status()
+                        self.logger.info(
+                            f"📊 Managing {len(active_grids)} active grids - "
+                            f"Network Health: {health_status['status']} ({health_status['uptime_percentage']:.1f}% uptime)"
+                        )
+                except Exception as e:
+                    self.logger.error(f"Error getting grid status: {e}")
 
-                await self._safe_grid_update()
-                # Dynamic interval based on market conditions
+                # Dynamic interval based on conditions
                 interval = await self._get_next_check_interval()
                 await asyncio.sleep(interval)
 
-            except Exception:
+            except Exception as e:
+                # Enhanced error handling
+                await self.network_recovery._handle_failure(
+                    "grid_management_loop", None, e
+                )
+                self.logger.error(f"Error in grid management loop: {e}")
+
                 # Progressive backoff on errors
                 error_interval = await self._get_error_backoff_interval()
                 await asyncio.sleep(error_interval)
@@ -399,7 +503,7 @@ class GridTradingService:
 
             self.setup_telegram_bot()
 
-            # ADD THIS: Send startup notification
+            # Send startup notification
             await self.send_service_startup_notification()
 
             self.running = True
@@ -412,7 +516,7 @@ class GridTradingService:
             raise
 
     async def _init_fifo_monitoring(self):
-        """Initialize FIFO monitoring for existing clients - ENHANCED"""
+        """Initialize FIFO monitoring for existing clients"""
         try:
             # Get all active clients
             with sqlite3.connect(self.config.DATABASE_PATH) as conn:
@@ -425,7 +529,7 @@ class GridTradingService:
             for client_id in active_clients:
                 self.fifo_service.calculate_fifo_performance(client_id)
 
-                # ADD THIS: Initialize Telegram monitoring for each client
+                # Initialize Telegram monitoring for each client
                 await self.fifo_monitoring_service.add_client_monitor(client_id)
 
             self.logger.info(
@@ -456,18 +560,20 @@ class GridTradingService:
             # Enhanced network health
             health_status = self.network_recovery.get_health_status()
 
-            active_grids = (
-                len(self.grid_orchestrator.get_all_active_grids())
-                if hasattr(self.grid_orchestrator, "get_all_active_grids")
-                else 0
-            )
+            active_grids = 0
+            try:
+                grids = self.grid_orchestrator.get_all_active_grids()
+                active_grids = len(grids) if grids else 0
+            except Exception:
+                pass
 
-            # ADD THIS: Get FIFO monitoring status
-            fifo_monitors = (
-                len(self.fifo_monitoring_service.monitors)
-                if hasattr(self.fifo_monitoring_service, "monitors")
-                else 0
-            )
+            # Get FIFO monitoring status
+            fifo_monitors = 0
+            try:
+                if hasattr(self.fifo_monitoring_service, "monitors"):
+                    fifo_monitors = len(self.fifo_monitoring_service.monitors)
+            except Exception:
+                pass
 
             return {
                 "running": self.running,
@@ -482,11 +588,12 @@ class GridTradingService:
                 ),
                 "network_status": health_status.get("status", "unknown"),
                 "consecutive_failures": health_status.get("consecutive_failures", 0),
-                # ADD THESE:
                 "fifo_monitors_active": fifo_monitors,
                 "telegram_notifications": "enabled"
                 if hasattr(self, "fifo_monitoring_service")
                 else "disabled",
+                "error_count": self._error_count,
+                "last_successful_update": self._last_successful_update.isoformat(),
             }
         except Exception as e:
             return {"error": str(e)}
@@ -494,11 +601,21 @@ class GridTradingService:
     async def send_service_startup_notification(self):
         """Send service startup notification"""
         try:
-            from services.telegram_notifier import TelegramNotifier
+            # Try to import telegram notifier
+            try:
+                from services.telegram_notifier import TelegramNotifier
 
-            notifier = TelegramNotifier()
+                notifier = TelegramNotifier()
+            except ImportError:
+                self.logger.warning(
+                    "Telegram notifier not available, skipping startup notification"
+                )
+                return
 
             if not notifier.enabled:
+                self.logger.debug(
+                    "Telegram notifier disabled, skipping startup notification"
+                )
                 return
 
             # Get active clients count
@@ -513,16 +630,16 @@ class GridTradingService:
 
             startup_message = f"""🚀 **GridTrader Pro Service STARTED**
 
-    **⚡ System Status:** OPERATIONAL
-    **🔗 Network Health:** {health_status.get("status", "UNKNOWN")}
-    **👥 Active Clients:** {active_clients}
-    **📱 Telegram Bot:** {"✅ ENABLED" if self.telegram_app else "❌ DISABLED"}
-    **📊 FIFO Monitoring:** ✅ ACTIVE
-    **🛡️ Network Recovery:** ✅ ENHANCED
+**⚡ System Status:** OPERATIONAL
+**🔗 Network Health:** {health_status.get("status", "UNKNOWN")}
+**👥 Active Clients:** {active_clients}
+**📱 Telegram Bot:** {"✅ ENABLED" if self.telegram_app else "❌ DISABLED"}
+**📊 FIFO Monitoring:** ✅ ACTIVE
+**🛡️ Network Recovery:** ✅ ENHANCED
 
-    **🕐 Started:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}
+**🕐 Started:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}
 
-    🤖 **Ready to manage client grids and capture profits!**"""
+🤖 **Ready to manage client grids and capture profits!**"""
 
             await notifier.send_message(startup_message)
             self.logger.info("✅ Service startup notification sent")
@@ -537,70 +654,35 @@ class GridTradingService:
             await self.fifo_monitoring_service.add_client_monitor(client_id)
 
             # Send grid start notification through the monitoring service
-            from services.telegram_notifier import TelegramNotifier
+            try:
+                from services.telegram_notifier import TelegramNotifier
 
-            notifier = TelegramNotifier()
+                notifier = TelegramNotifier()
 
-            if notifier.enabled:
-                message = f"""🚀 **New Grid Started**
+                if notifier.enabled:
+                    message = f"""🚀 **New Grid Started**
 
-    **👤 Client:** {client_id}
-    **📊 Symbol:** {symbol}
-    **💰 Capital:** ${capital:,.2f}
+**👤 Client:** {client_id}
+**📊 Symbol:** {symbol}
+**💰 Capital:** ${capital:,.2f}
 
-    **🎯 System:** 35/65 Dual-Scale Grid
-    **📈 Status:** ACTIVE & MONITORING
+**🎯 System:** 35/65 Dual-Scale Grid
+**📈 Status:** ACTIVE & MONITORING
 
-    ⏰ {datetime.now().strftime("%H:%M:%S")}"""
+⏰ {datetime.now().strftime("%H:%M:%S")}"""
 
-                await notifier.send_message(message)
+                    await notifier.send_message(message)
+            except ImportError:
+                self.logger.warning(
+                    "Telegram notifier not available for grid start notification"
+                )
 
         except Exception as e:
             self.logger.error(f"Failed to handle grid start notification: {e}")
 
 
-def get_service_status(self):
-    """Get comprehensive service status including enhanced network health"""
-    try:
-        # Enhanced network health
-        health_status = self.network_recovery.get_health_status()
-
-        active_grids = (
-            len(self.grid_orchestrator.get_all_active_grids())
-            if hasattr(self.grid_orchestrator, "get_all_active_grids")
-            else 0
-        )
-
-        # ADD THIS: Get FIFO monitoring status
-        fifo_monitors = (
-            len(self.fifo_monitoring_service.monitors)
-            if hasattr(self.fifo_monitoring_service, "monitors")
-            else 0
-        )
-
-        return {
-            "running": self.running,
-            "network_health": health_status,
-            "active_grids": active_grids,
-            "telegram_bot": self.telegram_app is not None,
-            "last_health_check": self.last_health_check.isoformat(),
-            "emergency_stop_needed": self.network_recovery.is_emergency_stop_needed(),
-            "total_network_requests": health_status.get("total_requests", 0),
-            "network_uptime_percentage": health_status.get("uptime_percentage", 100.0),
-            "network_status": health_status.get("status", "unknown"),
-            "consecutive_failures": health_status.get("consecutive_failures", 0),
-            # ADD THESE:
-            "fifo_monitors_active": fifo_monitors,
-            "telegram_notifications": "enabled"
-            if hasattr(self, "fifo_monitoring_service")
-            else "disabled",
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-
 def main():
-    """Entry point - Clean Phase 4 Implementation"""
+    """Entry point with Advanced Features Support"""
     # Validate configuration
     if not Config.validate():
         print("❌ Invalid configuration. Please check your environment variables.")
@@ -608,6 +690,22 @@ def main():
 
     print("🚀 Starting GridTrader Pro Client Service")
     print("=" * 50)
+
+    # Show feature status
+    if ADVANCED_FEATURES_ENABLED:
+        print("🎯 ADVANCED FEATURES MODE")
+        print("✅ Enhanced Dual-Scale Grid Manager")
+        print("✅ Compound Interest Management")
+        print("✅ Intelligent Market Timing")
+        print("✅ Volatility-based Risk Management")
+        print("✅ Smart Grid Auto-Reset")
+        print("✅ Precision Order Handling")
+        print("✅ Advanced Performance Monitoring")
+    else:
+        print("📊 STANDARD MODE")
+        print("✅ Basic Dual-Scale Grid Trading")
+        print("💡 Enable advanced features with: export ADVANCED_FEATURES=true")
+
     print("✅ Real trading only - no trials or demos")
     print("✅ Client API key management")
     print("✅ Professional grid trading")

@@ -1,6 +1,5 @@
-# repositories/client_repository.py - FIXED FIELD MAPPING
-
-"""Client repository for simplified grid trading service - FIXED MAPPING"""
+# repositories/client_repository.py - COMPLETELY FIXED VERSION
+"""Client repository with FIXED field mapping and error handling"""
 
 import logging
 import sqlite3
@@ -13,7 +12,7 @@ from utils.crypto import CryptoUtils
 
 
 class ClientRepository:
-    """Repository for client data management - FIXED FIELD MAPPING"""
+    """FIXED Repository for client data management"""
 
     def __init__(self, db_path: str = None):
         self.db_path = db_path or Config.DATABASE_PATH
@@ -23,7 +22,7 @@ class ClientRepository:
     def create_client(
         self, telegram_id: int, username: str = None, first_name: str = None
     ) -> Client:
-        """Create a new client"""
+        """Create a new client with FIXED database schema"""
         client = Client(
             telegram_id=telegram_id, username=username, first_name=first_name
         )
@@ -50,22 +49,23 @@ class ClientRepository:
                         ",".join(client.trading_pairs),
                         client.grid_spacing,
                         client.grid_levels,
-                        client.order_size,
+                        client.order_size,  # FIXED: Now this field exists in Client model
                     ),
                 )
 
-            self.logger.info(f"Created client: {telegram_id}")
+            self.logger.info(f"✅ Created client: {telegram_id}")
             return client
 
         except sqlite3.IntegrityError:
             # Client already exists, return existing client
+            self.logger.info(f"Client {telegram_id} already exists, fetching...")
             return self.get_client(telegram_id)
         except Exception as e:
-            self.logger.error(f"Error creating client {telegram_id}: {e}")
+            self.logger.error(f"❌ Error creating client {telegram_id}: {e}")
             return client
 
     def get_client(self, telegram_id: int) -> Optional[Client]:
-        """Get client by telegram ID - FIXED FIELD MAPPING"""
+        """Get client by telegram ID - COMPLETELY FIXED FIELD MAPPING"""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.execute(
@@ -81,15 +81,18 @@ class ClientRepository:
 
                 row = cursor.fetchone()
                 if not row:
-                    self.logger.warning(f"Client {telegram_id} not found in database")
+                    self.logger.warning(
+                        f"❌ Client {telegram_id} not found in database"
+                    )
                     return None
 
                 self.logger.debug(
-                    f"Retrieved client data for {telegram_id}: {len(row)} fields"
+                    f"✅ Retrieved client data for {telegram_id}: {len(row)} fields"
                 )
 
-                # FIXED: Correct field mapping with proper indexes
+                # COMPLETELY FIXED: Proper field mapping with correct indexes
                 try:
+                    # Build client data dictionary with EXACT field mapping
                     client_data = {
                         "telegram_id": row[0],  # 0
                         "username": row[1],  # 1
@@ -110,12 +113,11 @@ class ClientRepository:
                         "grid_levels": int(row[13]) if row[13] is not None else 8,  # 13
                         "order_size": float(row[14])
                         if row[14] is not None
-                        else 50.0,  # 14
+                        else 50.0,  # 14 - FIXED!
                     }
 
                     # Parse datetime fields safely
-                    # created_at (index 5)
-                    if row[5]:
+                    if row[5]:  # created_at (index 5)
                         try:
                             client_data["created_at"] = datetime.fromisoformat(row[5])
                         except:
@@ -123,8 +125,7 @@ class ClientRepository:
                     else:
                         client_data["created_at"] = datetime.now()
 
-                    # updated_at (index 6)
-                    if row[6]:
+                    if row[6]:  # updated_at (index 6)
                         try:
                             client_data["updated_at"] = datetime.fromisoformat(row[6])
                         except:
@@ -143,84 +144,60 @@ class ClientRepository:
                     client_data["binance_secret_key"] = row[11]  # Keep encrypted
 
                     self.logger.debug(
-                        f"Client data parsed successfully for {telegram_id}"
+                        f"✅ Client data parsed successfully for {telegram_id}"
                     )
+
+                    # Create Client object with FIXED parameters
                     return Client(**client_data)
 
                 except (ValueError, TypeError, IndexError) as parse_error:
                     self.logger.error(
-                        f"Error parsing client data for {telegram_id}: {parse_error}"
+                        f"❌ Error parsing client data for {telegram_id}: {parse_error}"
                     )
-                    self.logger.error(f"Row data: {row}")
-                    return None
+                    self.logger.error(f"Raw data: {row}")
+
+                    # FALLBACK: Create minimal client to avoid complete failure
+                    fallback_client = Client(
+                        telegram_id=telegram_id,
+                        username=row[1] if len(row) > 1 else None,
+                        first_name=row[2] if len(row) > 2 else None,
+                        total_capital=float(row[7]) if len(row) > 7 and row[7] else 0.0,
+                        order_size=float(row[14])
+                        if len(row) > 14 and row[14]
+                        else 50.0,
+                    )
+                    self.logger.warning(
+                        f"⚠️ Using fallback client data for {telegram_id}"
+                    )
+                    return fallback_client
 
         except Exception as e:
-            self.logger.error(f"Error getting client {telegram_id}: {e}")
+            self.logger.error(f"❌ Database error getting client {telegram_id}: {e}")
             return None
 
-    def get_decrypted_api_keys(self, client: Client) -> tuple:
-        """Get decrypted API keys for a client"""
-        try:
-            if not client.binance_api_key or not client.binance_secret_key:
-                self.logger.debug(
-                    f"No API keys to decrypt for client {client.telegram_id}"
-                )
-                return None, None
-
-            self.logger.debug(f"Decrypting API keys for client {client.telegram_id}")
-            api_key = self.crypto_utils.decrypt(client.binance_api_key)
-            secret_key = self.crypto_utils.decrypt(client.binance_secret_key)
-
-            self.logger.debug(
-                f"Successfully decrypted API keys for client {client.telegram_id}"
-            )
-            return api_key, secret_key
-
-        except Exception as e:
-            self.logger.error(
-                f"Error decrypting API keys for client {client.telegram_id}: {e}"
-            )
-            return None, None
-
     def update_client(self, client: Client) -> bool:
-        """Update client information"""
+        """Update client information with FIXED field mapping"""
         try:
             # Encrypt API keys before storing if they're not already encrypted
             encrypted_api_key = None
             encrypted_secret_key = None
 
             if client.binance_api_key:
-                # Check if it's already encrypted (long base64 string)
                 if len(client.binance_api_key) > 100:
-                    # Already encrypted
-                    encrypted_api_key = client.binance_api_key
-                    self.logger.debug(
-                        f"API key for client {client.telegram_id} appears to be already encrypted"
-                    )
+                    encrypted_api_key = client.binance_api_key  # Already encrypted
                 else:
-                    # Raw key, needs encryption
                     encrypted_api_key = self.crypto_utils.encrypt(
                         client.binance_api_key
                     )
-                    self.logger.debug(
-                        f"Encrypting raw API key for client {client.telegram_id}"
-                    )
 
             if client.binance_secret_key:
-                # Check if it's already encrypted (long base64 string)
                 if len(client.binance_secret_key) > 100:
-                    # Already encrypted
-                    encrypted_secret_key = client.binance_secret_key
-                    self.logger.debug(
-                        f"Secret key for client {client.telegram_id} appears to be already encrypted"
-                    )
+                    encrypted_secret_key = (
+                        client.binance_secret_key
+                    )  # Already encrypted
                 else:
-                    # Raw key, needs encryption
                     encrypted_secret_key = self.crypto_utils.encrypt(
                         client.binance_secret_key
-                    )
-                    self.logger.debug(
-                        f"Encrypting raw secret key for client {client.telegram_id}"
                     )
 
             with sqlite3.connect(self.db_path) as conn:
@@ -246,17 +223,41 @@ class ClientRepository:
                         encrypted_secret_key,
                         client.grid_spacing,
                         client.grid_levels,
-                        client.order_size,
+                        client.order_size,  # FIXED: Now properly included
                         client.telegram_id,
                     ),
                 )
 
-            self.logger.info(f"Updated client {client.telegram_id} successfully")
+            self.logger.info(f"✅ Updated client {client.telegram_id} successfully")
             return True
 
         except Exception as e:
-            self.logger.error(f"Error updating client {client.telegram_id}: {e}")
+            self.logger.error(f"❌ Error updating client {client.telegram_id}: {e}")
             return False
+
+    def get_decrypted_api_keys(self, client: Client) -> tuple:
+        """Get decrypted API keys for a client"""
+        try:
+            if not client.binance_api_key or not client.binance_secret_key:
+                self.logger.debug(
+                    f"No API keys to decrypt for client {client.telegram_id}"
+                )
+                return None, None
+
+            self.logger.debug(f"Decrypting API keys for client {client.telegram_id}")
+            api_key = self.crypto_utils.decrypt(client.binance_api_key)
+            secret_key = self.crypto_utils.decrypt(client.binance_secret_key)
+
+            self.logger.debug(
+                f"✅ Successfully decrypted API keys for client {client.telegram_id}"
+            )
+            return api_key, secret_key
+
+        except Exception as e:
+            self.logger.error(
+                f"❌ Error decrypting API keys for client {client.telegram_id}: {e}"
+            )
+            return None, None
 
     def get_all_active_clients(self) -> list:
         """Get all active clients"""
@@ -273,7 +274,7 @@ class ClientRepository:
                 return [row[0] for row in cursor.fetchall()]
 
         except Exception as e:
-            self.logger.error(f"Error getting active clients: {e}")
+            self.logger.error(f"❌ Error getting active clients: {e}")
             return []
 
     def client_exists(self, telegram_id: int) -> bool:
@@ -295,7 +296,7 @@ class ClientRepository:
                 cursor = conn.execute("PRAGMA table_info(clients)")
                 columns = [(row[1], row[2]) for row in cursor.fetchall()]
 
-                self.logger.info(f"Client table columns: {columns}")
+                self.logger.info(f"📋 Client table columns: {columns}")
 
                 # Get client data
                 cursor = conn.execute(
@@ -304,7 +305,7 @@ class ClientRepository:
                 row = cursor.fetchone()
 
                 if row:
-                    self.logger.info(f"Client {telegram_id} data length: {len(row)}")
+                    self.logger.info(f"📊 Client {telegram_id} data length: {len(row)}")
                     for i, value in enumerate(row):
                         if i < len(columns):
                             col_name = columns[i][0]
@@ -312,7 +313,7 @@ class ClientRepository:
                                 f"  {i}: {col_name} = {str(value)[:50]}..."
                             )
                 else:
-                    self.logger.info(f"No data found for client {telegram_id}")
+                    self.logger.info(f"❌ No data found for client {telegram_id}")
 
         except Exception as e:
-            self.logger.error(f"Debug error: {e}")
+            self.logger.error(f"❌ Debug error: {e}")

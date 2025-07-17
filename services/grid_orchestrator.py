@@ -10,8 +10,8 @@ from binance.client import Client
 from models.client import GridStatus
 from repositories.client_repository import ClientRepository
 from repositories.trade_repository import TradeRepository
-from services.dual_scale_grid_manager import (
-    DualScaleGridManager as GridManager,
+from services.enhanced_dual_scale_manager import (
+    EnhancedDualScaleGridManager as GridManager,
 )
 from services.market_analysis import MarketAnalysisService
 from utils.crypto import CryptoUtils

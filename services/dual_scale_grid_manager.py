@@ -12,6 +12,11 @@ from binance.client import Client
 from models.adaptive_grid_config import AdaptiveGridConfig
 from repositories.client_repository import ClientRepository
 from repositories.trade_repository import TradeRepository
+from services.advanced_trading_features import (
+    CompoundInterestManager,
+    IntelligentMarketTimer,
+    PrecisionOrderHandler,
+)
 from services.compound_interest_manager import CompoundIntegrationService
 from services.fifo_service import FIFOService
 from services.market_analysis import MarketAnalysisService, MarketCondition
@@ -86,10 +91,9 @@ class DualScaleGridManager:
         self.optimizer = VolatilityCompoundIntegration(
             self.compound_service.compound_manager, self.volatility_sizer
         )
-        # future implementations from config
-        self.market_timer = TemporaryMarketTimer()
-        self.volatility_risk = TemporaryVolatilityRisk()
-        self.auto_reset = TemporaryAutoReset()
+        self.compound_manager = CompoundInterestManager(client_id)
+        self.market_timer = IntelligentMarketTimer()
+        self.precision_handler = PrecisionOrderHandler(binance_client)
 
         # Initialize services
         self.market_analysis = MarketAnalysisService(binance_client)

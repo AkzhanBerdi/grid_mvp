@@ -1,5 +1,5 @@
-# models/client.py
-"""Simplified Client model for paying customers"""
+# models/client.py - FIXED VERSION
+"""Fixed Client model with proper database schema compatibility"""
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -23,7 +23,7 @@ class GridStatus(Enum):
 
 @dataclass
 class Client:
-    """Simplified Client model for paying customers"""
+    """FIXED Client model - matches database schema exactly"""
 
     telegram_id: int
     username: Optional[str] = None
@@ -42,14 +42,10 @@ class Client:
     binance_api_key: Optional[str] = None
     binance_secret_key: Optional[str] = None
 
-    # Grid Settings
+    # Grid Settings - FIXED: Added order_size parameter
     grid_spacing: float = 0.025  # 2.5%
     grid_levels: int = 8
-
-    # Capital allocated to grid system
-    base_capital_per_grid: float = 0.0
-    profit_reinvestment_rate: float = 0.5  # 50% of profits reinvested
-    max_order_size_multiplier: float = 3.0  # Safety cap
+    order_size: float = 50.0  # USD per order - THIS WAS MISSING!
 
     def __post_init__(self):
         if self.created_at is None:
