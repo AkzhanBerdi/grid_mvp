@@ -734,7 +734,7 @@ class GridOrchestrator:
 
             # Initialize ENHANCED adaptive grid manager
             if client_id not in self.adaptive_managers:
-                self.adaptive_managers[client_id] = EnhancedDualScaleGridManager(
+                self.adaptive_managers[client_id] = GridManager(
                     self.binance_clients[client_id], client_id
                 )
                 self.logger.info(f"✅ Enhanced manager created for client {client_id}")
