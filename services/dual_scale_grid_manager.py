@@ -12,7 +12,32 @@ from binance.client import Client
 from models.adaptive_grid_config import AdaptiveGridConfig
 from repositories.client_repository import ClientRepository
 from repositories.trade_repository import TradeRepository
+from services.compound_interest_manager import CompoundIntegrationService
+from services.fifo_service import FIFOService
 from services.market_analysis import MarketAnalysisService, MarketCondition
+
+"""
+INTEGRATION EXAMPLE:
+===================
+
+# In your DualScaleGridManager initialization:
+from services.compound_interest_manager import CompoundIntegrationService
+
+class DualScaleGridManager:
+    def __init__(self, binance_client, client_id):
+        # ... existing code ...
+        
+        # Replace TemporaryOrderSizer with CompoundManager
+        self.fifo_service = FIFOService()
+        self.compound_service = CompoundIntegrationService(self.fifo_service)
+        self.order_sizer = self.compound_service.compound_manager
+        
+        # Initialize compound tracking
+        asyncio.create_task(self.compound_service.initialize_client(client_id))
+
+# In your trade execution:
+async def notify_trade_execution(self, client_id, symbol, side, quantity, price):
+    # ... existing notification code ..."""
 
 
 class DualScaleGridManager:
@@ -23,6 +48,17 @@ class DualScaleGridManager:
         self.client_id = client_id
         self.logger = logging.getLogger(__name__)
 
+        self.fifo_service = FIFOService()
+        self.compound_service = CompoundIntegrationService(self.fifo_service)
+        self.order_sizer = self.compound_service.compound_manager
+        # Initialize compound tracking
+        asyncio.create_task(self.compound_service.initialize_client(client_id))
+
+        # future implementations from config
+        self.market_timer = TemporaryMarketTimer()
+        self.volatility_risk = TemporaryVolatilityRisk()
+        self.auto_reset = TemporaryAutoReset()
+
         # Initialize services
         self.market_analysis = MarketAnalysisService(binance_client)
         self.client_repo = ClientRepository()
@@ -32,13 +68,11 @@ class DualScaleGridManager:
         self.active_grids: Dict[str, AdaptiveGridConfig] = {}
         self.last_market_check = {}
         self.last_balance_check = {}
-        self.market_check_interval = 300  # 5 minutes
-        self.balance_check_interval = 60  # 1 minute
 
-        # 35/65 ALLOCATION STRATEGY
-        self.BASE_ALLOCATION = 0.35  # 35% - Conservative foundation
-        self.ENHANCED_ALLOCATION = 0.65  # 65% - Aggressive profit capture
-
+        # Minimum conservative allocation
+        self.min_base_allocation = 0.2
+        self.max_enhanced_allocation = 0.8  # Maximum aggressive allocation
+        self.default_base_allocation = 0.4  # Starting point
         # Symbol configurations
         self.symbol_configs = {
             "ADAUSDT": {
@@ -69,6 +103,11 @@ class DualScaleGridManager:
             "enhanced_grid_trades": 0,
             "dual_scale_adaptations": 0,
         }
+        # Fixed intervals removed - will be calculated dynamically
+        self.min_market_check_interval = 120  # 2 minutes minimum
+        self.max_market_check_interval = 600  # 10 minutes maximum
+        self.min_balance_check_interval = 30  # 30 seconds minimum
+        self.max_balance_check_interval = 300  # 5 minutes maximum
 
     async def get_account_balance(self):
         """Get account balance for notifications"""
@@ -227,6 +266,22 @@ class DualScaleGridManager:
 
     async def start_dual_scale_grid(self, symbol: str, total_capital: float) -> Dict:
         """Start intelligent 35/65 dual-scale grid system - FIXED VERSION"""
+        # Get dynamic allocation (replaces fixed BASE_ALLOCATION/ENHANCED_ALLOCATION)
+        allocation = await self.order_sizer.get_grid_allocation(
+            self.client_id, total_capital
+        )
+        base_capital = allocation["base_capital"]
+        enhanced_capital = allocation["enhanced_capital"]
+
+        # Get dynamic order size (replaces fixed order_size)
+        base_order_size = await self.order_sizer.get_current_order_size(
+            self.client_id, symbol, base_capital
+        )
+        enhanced_order_size = await self.order_sizer.get_current_order_size(
+            self.client_id, symbol, enhanced_capital
+        )
+
+        # Continue with existing logic but using dynamic values...
         try:
             self.logger.info(
                 f"🚀 Starting 35/65 dual-scale grid for {symbol} with ${total_capital:,.2f}"
@@ -846,6 +901,9 @@ class DualScaleGridManager:
                 except Exception as e:
                     self.logger.warning(f"FIFO logging failed: {e}")
                 await self._check_filled_orders_dual_scale(adaptive_config)
+                # Dynamic interval based on market activity
+                interval = await self._calculate_monitoring_interval(symbol)
+                await asyncio.sleep(interval)
 
                 # FIFO Integration - Notify Enhanced Grid Orchestrator
                 try:
@@ -866,9 +924,6 @@ class DualScaleGridManager:
 
                 # Update performance metrics
                 await self._update_dual_scale_performance(adaptive_config)
-
-                # Wait before next check
-                await asyncio.sleep(60)
 
         except Exception as e:
             self.logger.error(f"❌ Dual-scale grid monitoring error: {e}")
@@ -1533,3 +1588,9 @@ class DualScaleGridManager:
 
         except Exception as e:
             self.logger.error(f"Failed to notify trade execution: {e}")
+
+        if side == "SELL":
+            estimated_profit = quantity * price * 0.025  # Estimate 2.5% grid profit
+            await self.compound_service.on_trade_executed(
+                client_id, symbol, side, quantity, price, estimated_profit
+            )

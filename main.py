@@ -192,15 +192,15 @@ class GridTradingService:
                         f"Network Health: {health_status['status']} ({health_status['uptime_percentage']:.1f}% uptime)"
                     )
 
-                await asyncio.sleep(30)
+                await self._safe_grid_update()
+                # Dynamic interval based on market conditions
+                interval = await self._get_next_check_interval()
+                await asyncio.sleep(interval)
 
-            except Exception as e:
-                # Top-level enhanced error handling
-                await self.network_recovery._handle_failure(
-                    "grid_management_loop", None, e
-                )
-                self.logger.error(f"Error in grid management loop: {e}")
-                await asyncio.sleep(60)
+            except Exception:
+                # Progressive backoff on errors
+                error_interval = await self._get_error_backoff_interval()
+                await asyncio.sleep(error_interval)
 
     async def _safe_grid_update(self):
         """Grid update wrapped with network recovery"""

@@ -45,7 +45,11 @@ class Client:
     # Grid Settings
     grid_spacing: float = 0.025  # 2.5%
     grid_levels: int = 8
-    order_size: float = 50.0  # USD per order
+
+    # Capital allocated to grid system
+    base_capital_per_grid: float = 0.0
+    profit_reinvestment_rate: float = 0.5  # 50% of profits reinvested
+    max_order_size_multiplier: float = 3.0  # Safety cap
 
     def __post_init__(self):
         if self.created_at is None:
