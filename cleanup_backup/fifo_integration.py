@@ -2,7 +2,7 @@
 """
 Integration script to add FIFO profit tracking to existing GridTrader Pro
 Modifies your existing TradeRepository and monitoring system
-"""
+"""breakdown
 
 import logging
 import sqlite3

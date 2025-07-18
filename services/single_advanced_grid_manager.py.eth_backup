@@ -177,9 +177,6 @@ except ImportError:
                         quantity_str = f"{adjusted_quantity:.1f}"
                     elif symbol == "SOLUSDT":
                         quantity_str = f"{adjusted_quantity:.4f}"
-                    elif symbol == "ETHUSDT":
-                        quantity_str = f"{adjusted_quantity:.5f}"
-                    
                     
                     else:
                         quantity_str = str(adjusted_quantity)
@@ -1061,21 +1058,7 @@ class SingleAdvancedGridManager:
                 return info
 
             
-            
-            # FORCE ETH overrides to fix precision issues
-            if symbol == "ETHUSDT":
-                info = {
-                    "price_precision": 2,
-                    "quantity_precision": 5,  # Allow 5 decimal places
-                    "tick_size": 0.01,
-                    "step_size": 0.00001,     # ETH step size is 0.00001
-                    "min_notional": 5.0,
-                    "status": "TRADING",
-                }
-                self.logger.info(f"🔒 FORCED ETH precision: step_size={info['step_size']}, quantity_precision={info['quantity_precision']}")
-                return info
-            
-            # For other symbols, get from Binance API# FORCE SOL overrides to fix precision issues  
+            # FORCE SOL overrides to fix precision issues  
             if symbol == "SOLUSDT":
                 info = {
                     "price_precision": 3,

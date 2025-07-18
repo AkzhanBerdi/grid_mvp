@@ -152,3 +152,78 @@ class CryptoUtils:
 
 
 # Create a debug function to test the current client's encrypted data
+def debug_client_encryption(client_id: int):
+    """Debug function to test client's encrypted data"""
+    print(f"🔍 Debugging encryption for client {client_id}")
+    print("=" * 50)
+
+    try:
+        # Import required modules
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+
+        from repositories.client_repository import ClientRepository
+        from utils.crypto import CryptoUtils
+
+        # Get client
+        repo = ClientRepository()
+        client = repo.get_client(client_id)
+
+        if not client:
+            print(f"❌ Client {client_id} not found")
+            return
+
+        print(f"✅ Client found: {client.first_name}")
+        print(f"   API Key set: {bool(client.binance_api_key)}")
+        print(f"   Secret Key set: {bool(client.binance_secret_key)}")
+
+        if client.binance_api_key:
+            print(f"   Encrypted API Key (first 50): {client.binance_api_key[:50]}...")
+            print(f"   Encrypted API Key length: {len(client.binance_api_key)}")
+
+        # Test crypto utils
+        crypto = CryptoUtils()
+
+        # Test basic encryption first
+        test_success = crypto.test_encryption_cycle()
+        print(f"✅ Basic encryption test: {'PASS' if test_success else 'FAIL'}")
+
+        if client.binance_api_key:
+            print("\n🔓 Testing client API key decryption...")
+            success, result, error = crypto.safe_decrypt(client.binance_api_key)
+
+            if success:
+                print("✅ API Key decryption successful!")
+                print(f"   Decrypted length: {len(result)}")
+                print(f"   First 20 chars: {result[:20]}...")
+            else:
+                print(f"❌ API Key decryption failed: {error}")
+
+                # Try to understand the format
+                try:
+                    decoded = base64.urlsafe_b64decode(client.binance_api_key)
+                    print(f"   Base64 decode successful, length: {len(decoded)}")
+                except Exception as decode_err:
+                    print(f"   Base64 decode failed: {decode_err}")
+
+        if client.binance_secret_key:
+            print("\n🔓 Testing client secret key decryption...")
+            success, result, error = crypto.safe_decrypt(client.binance_secret_key)
+
+            if success:
+                print("✅ Secret Key decryption successful!")
+                print(f"   Decrypted length: {len(result)}")
+            else:
+                print(f"❌ Secret Key decryption failed: {error}")
+
+    except Exception as e:
+        print(f"❌ Debug failed: {e}")
+
+        traceback.print_exc()
+
+
+if __name__ == "__main__":
+    # Test with the specific client ID from the logs
+    debug_client_encryption(485825055)

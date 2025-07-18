@@ -16,9 +16,9 @@ Key Benefits:
 - Reduces risk during losing streaks
 """
 
-from typing import Dict
 import logging
 import time
+from typing import Dict
 
 import numpy as np
 
@@ -523,31 +523,3 @@ class CompoundIntegrationService:
     async def get_dashboard_metrics(self, client_id: int) -> Dict:
         """Get compound metrics for dashboard display"""
         return await self.compound_manager.get_performance_summary(client_id)
-
-
-# =============================================================================
-# USAGE EXAMPLE
-# =============================================================================
-"""
-INTEGRATION EXAMPLE:
-===================
-
-# In your DualScaleGridManager initialization:
-from services.compound_interest_manager import CompoundIntegrationService
-
-class DualScaleGridManager:
-    def __init__(self, binance_client, client_id):
-        # ... existing code ...
-        
-        # Replace TemporaryOrderSizer with CompoundManager
-        self.fifo_service = FIFOService()
-        self.compound_service = CompoundIntegrationService(self.fifo_service)
-        self.order_sizer = self.compound_service.compound_manager
-        
-        # Initialize compound tracking
-        asyncio.create_task(self.compound_service.initialize_client(client_id))
-
-# In your trade execution:
-async def notify_trade_execution(self, client_id, symbol, side, quantity, price):
-    # ... existing notification code ...
-    
