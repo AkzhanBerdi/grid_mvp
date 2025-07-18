@@ -9,7 +9,9 @@ from typing import Dict, Tuple
 
 from binance.client import Client
 
-from models.adaptive_grid_config import AdaptiveGridConfig
+from models.single_advanced_grid_config import (
+    SingleAdvancedGridConfig as AdaptiveGridConfig,
+)
 from repositories.client_repository import ClientRepository
 from repositories.trade_repository import TradeRepository
 from services.advanced_trading_features import (

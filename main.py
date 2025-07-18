@@ -372,6 +372,15 @@ class GridTradingService:
     async def telegram_message(self, update, context):
         """Handle text messages with enhanced network recovery"""
         try:
+            # DEBUG: Log which handler is being used
+            self.logger.info(f"🔍 Using handler: {type(self.handler).__name__}")
+            self.logger.info(
+                f"🔍 Handler has handle_message: {hasattr(self.handler, 'handle_message')}"
+            )
+            self.logger.info(
+                f"🔍 Handler handle_message method: {self.handler.handle_message}"
+            )
+
             await self.handler.handle_message(update, context)
 
             # Signal successful operation
@@ -385,6 +394,9 @@ class GridTradingService:
                 "telegram_message", update.effective_user.id, e
             )
             self.logger.error(f"Error in message handler: {e}")
+            import traceback
+
+            self.logger.error(f"Stack trace: {traceback.format_exc()}")
 
     def setup_telegram_bot(self):
         """Setup Telegram bot application"""
@@ -654,7 +666,6 @@ class GridTradingService:
 
             # Send grid start notification through the monitoring service
             try:
-
                 notifier = TelegramNotifier()
 
                 if notifier.enabled:
@@ -724,4 +735,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

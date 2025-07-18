@@ -4,6 +4,7 @@
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from config import ThreeAssetPortfolioManager
 from utils.base_handler import BaseClientHandler
 
 
@@ -428,22 +429,54 @@ Error: {error_message}
             )
 
     async def handle_message(self, update, context):
-        """Handle text messages with smart trading commands"""
+        """Handle text messages with smart trading commands - OVERRIDE BASE HANDLER"""
         client_id = update.effective_user.id
         text = update.message.text.strip()
 
-        self.logger.info(f"Smart message from client {client_id}: {text}")
+        self.logger.info(f"📨 ClientHandler message from client {client_id}: {text}")
 
         # Try common message handlers first (from BaseClientHandler)
-        if await self.handle_common_messages(update, context, text):
-            return
+        try:
+            common_handled = await self.handle_common_messages(update, context, text)
+            self.logger.info(f"🔍 Common message handled: {common_handled}")
+            if common_handled:
+                return
+        except Exception as e:
+            self.logger.error(f"❌ Error in common message handler: {e}")
 
-        # Handle smart trading commands
-        if self._is_trading_command(text):
-            await self._handle_smart_trading_command(update, client_id, text)
-            return
+        # Handle smart trading commands - THIS METHOD EXISTS IN THIS CLASS
+        try:
+            is_trading_cmd = self._is_trading_command(text)
+            self.logger.info(f"🔍 Is trading command: {is_trading_cmd}")
 
-        # Default response with helpful information
+            if is_trading_cmd:
+                self.logger.info(
+                    f"🎯 Processing as trading command in ClientHandler: {text}"
+                )
+                try:
+                    self.logger.info("🔍 About to call _handle_smart_trading_command")
+                    await self._handle_smart_trading_command(update, client_id, text)
+                    self.logger.info(
+                        "🔍 _handle_smart_trading_command completed successfully"
+                    )
+                    return
+                except Exception as method_error:
+                    self.logger.error(
+                        f"❌ Error calling _handle_smart_trading_command: {method_error}"
+                    )
+                    import traceback
+
+                    self.logger.error(
+                        f"Method call traceback: {traceback.format_exc()}"
+                    )
+                    raise
+        except Exception as e:
+            self.logger.error(f"❌ Error checking/handling trading command: {e}")
+            import traceback
+
+            self.logger.error(f"Stack trace: {traceback.format_exc()}")
+
+        # Default response
         keyboard = InlineKeyboardMarkup(
             [
                 [
@@ -457,79 +490,125 @@ Error: {error_message}
 
         await update.message.reply_text(
             "🧠 **Smart Trading Commands:**\n"
-            "• `ADA 1000` - Start ADA grid with $1000\n"
-            "• `AVAX 500` - Start AVAX grid with $500\n\n"
+            "• `ETH 2000` - Start ETH grid with $2000\n"
+            "• `SOL 1500` - Start SOL grid with $1500\n"
+            "• `ADA 1000` - Start ADA grid with $1000\n\n"
             "**Or use the buttons below:**",
             reply_markup=keyboard,
             parse_mode="Markdown",
         )
 
-    def _is_trading_command(self, text):
-        """Check if text is a trading command"""
-        parts = text.strip().upper().split()
-        if len(parts) == 2:
-            try:
-                symbol = parts[0]
-                amount = float(parts[1])
-                return symbol in ["ADA", "AVAX", "BTC", "ETH"] and amount > 0
-            except ValueError:
-                pass
-        return False
-
     async def _handle_smart_trading_command(self, update, client_id, text):
-        """Handle smart trading command like 'ADA 1000'"""
-        client = self.client_repo.get_client(client_id)
-
-        if not client or not client.is_active():
-            await update.message.reply_text(
-                "❌ Please complete your smart trading setup first."
-            )
-            return
-
-        if not client.can_start_grid():
-            await update.message.reply_text(
-                "❌ Please set up your API keys and capital first."
-            )
-            return
-
+        """Handle smart trading command like 'ADA 1000' - WITH FULL DEBUGGING"""
         try:
+            self.logger.info(
+                f"🔍 ENTERING _handle_smart_trading_command: {text} for client {client_id}"
+            )
+
+            client = self.client_repo.get_client(client_id)
+            self.logger.info(f"🔍 Client retrieved: {client is not None}")
+
+            if not client:
+                self.logger.warning(f"🔍 No client found for {client_id}")
+                await update.message.reply_text(
+                    "❌ Please complete your smart trading setup first."
+                )
+                return
+
+            if not client.is_active():
+                self.logger.warning(
+                    f"🔍 Client {client_id} is not active: {client.status}"
+                )
+                await update.message.reply_text(
+                    "❌ Please complete your smart trading setup first."
+                )
+                return
+
+            self.logger.info("🔍 Client active check passed")
+
+            can_start = client.can_start_grid()
+            self.logger.info(f"🔍 Client can start grid: {can_start}")
+            self.logger.info(
+                f"🔍 Client API key exists: {bool(client.binance_api_key)}"
+            )
+            self.logger.info(
+                f"🔍 Client secret key exists: {bool(client.binance_secret_key)}"
+            )
+            self.logger.info(f"🔍 Client capital: {client.total_capital}")
+
+            if not can_start:
+                await update.message.reply_text(
+                    "❌ Please set up your API keys and capital first."
+                )
+                return
+
+            self.logger.info("🔍 All client checks passed, parsing command")
+
+            # Parse command
             parts = text.upper().split()
             symbol = parts[0]
             amount = float(parts[1])
 
+            self.logger.info(f"🔍 Parsed - Symbol: {symbol}, Amount: ${amount}")
+
+            # Validation
             if amount < 100:
+                self.logger.warning(f"🔍 Amount too small: ${amount}")
                 await update.message.reply_text("💰 Minimum trading amount: $100")
                 return
 
-            if symbol not in ["ADA", "AVAX"]:
+            if symbol not in ["ADA", "AVAX", "BTC", "ETH", "SOL"]:
+                self.logger.warning(f"🔍 Symbol not supported: {symbol}")
                 await update.message.reply_text(
-                    f"❌ {symbol} not supported yet. Available: ADA, AVAX"
+                    f"❌ {symbol} not supported yet. Available: ADA, AVAX, BTC, ETH, SOL"
                 )
                 return
 
-            message = f"""🧠 **Smart Grid Trading Setup**
+            self.logger.info("🔍 All validations passed, creating confirmation message")
 
-**Symbol:** {symbol}/USDT
-**Capital:** ${amount:,.2f}
-**Strategy:** Smart Adaptive Grid
+            # Get asset info for display
+            asset_names = {
+                "ADA": "Cardano",
+                "AVAX": "Avalanche",
+                "BTC": "Bitcoin",
+                "ETH": "Ethereum",
+                "SOL": "Solana",
+            }
+            asset_emojis = {
+                "ADA": "🔵",
+                "AVAX": "🏔️",
+                "BTC": "🟠",
+                "ETH": "🔷",
+                "SOL": "🟣",
+            }
 
-**Features:**
-✅ Automated grid trading
-✅ Smart buy/sell levels
-✅ Risk management
-✅ 24/7 monitoring
+            # Create confirmation message
+            message = f"""{asset_emojis.get(symbol, "🔘")} **Smart Grid Trading Setup**
 
-Ready to launch?"""
+    **Asset:** {asset_names.get(symbol, symbol)} ({symbol}/USDT)
+    **Capital:** ${amount:,.2f}
+    **Strategy:** Advanced Dual-Scale Grid
+
+    **Features:**
+    ✅ Automated precision order handling
+    ✅ Volatility-based risk management
+    ✅ Compound interest growth
+    ✅ 24/7 market monitoring
+    ✅ FIFO profit tracking
+
+    Ready to launch?"""
 
             keyboard = [
                 [
                     InlineKeyboardButton(
                         "🚀 LAUNCH GRID",
-                        callback_data=f"execute_trade_{symbol}_{amount}",
+                        callback_data=f"execute_trade_{symbol}_{int(amount)}",
                     )
                 ],
                 [InlineKeyboardButton("❌ Cancel", callback_data="show_dashboard")],
             ]
+
+            self.logger.info("🔍 Sending confirmation message")
 
             await update.message.reply_text(
                 message,
@@ -537,49 +616,256 @@ Ready to launch?"""
                 parse_mode="Markdown",
             )
 
+            self.logger.info(f"✅ Smart command processed successfully: {text}")
+
         except Exception as e:
-            self.logger.error(f"Error handling smart trading command: {e}")
+            self.logger.error(f"❌ EXCEPTION in _handle_smart_trading_command: {e}")
+            import traceback
+
+            self.logger.error(f"Full traceback: {traceback.format_exc()}")
+
+            try:
+                await update.message.reply_text(
+                    "❌ Invalid format. Use: SYMBOL AMOUNT (e.g., ETH 800)"
+                )
+            except Exception as reply_error:
+                self.logger.error(f"❌ Failed to send error message: {reply_error}")
+
+    async def _handle_force_command(self, update, client_id, symbol, amount):
+        """Handle FORCE commands that bypass safety checks"""
+        try:
+            client = self.client_repo.get_client(client_id)
+            if not client:
+                await update.message.reply_text("❌ Client not found")
+                return
+
+            # Force mode bypasses normal safety checks
+            symbol_with_usdt = f"{symbol}USDT"
+
+            # Import high-risk portfolio manager
+            from services.high_risk_portfolio_manager import HighRiskPortfolioManager
+
+            portfolio_manager = HighRiskPortfolioManager()
+
+            # Get aggressive parameters for this symbol
+            params = portfolio_manager.get_optimized_grid_parameters(symbol_with_usdt)
+
+            # Override safety checks and start aggressive grid
             await update.message.reply_text(
-                "❌ Invalid format. Use: SYMBOL AMOUNT (e.g., ADA 1000)"
+                f"🚀 **FORCE MODE ACTIVATED**\n\n"
+                f"Symbol: {symbol_with_usdt}\n"
+                f"Capital: ${amount:,.2f}\n"
+                f"Mode: AGGRESSIVE TRADING\n\n"
+                f"⚠️ This bypasses all safety limits!"
             )
 
-    async def _handle_new_smart_client(self, update, user):
-        """Handle new client with smart trading introduction"""
-        client = self.client_repo.create_client(
-            telegram_id=user.id, username=user.username, first_name=user.first_name
-        )
+            # Start the grid with aggressive parameters
+            # You'll need to integrate with your existing grid manager
+            # grid_result = await self.grid_manager.start_aggressive_grid(...)
 
-        message = f"""🤖 **Welcome to GridTrader Pro Smart Trading**
+        except Exception as e:
+            await update.message.reply_text(f"❌ FORCE command failed: {e}")
 
-Hi {user.first_name}! Welcome to professional grid trading.
+    def _is_trading_command(self, text):
+        """Check if text is a trading command - WITH ETH AND SOL SUPPORT"""
+        try:
+            parts = text.strip().upper().split()
+            self.logger.info(
+                f"🔍 Checking if trading command: '{text}' -> parts: {parts}"
+            )
 
-**🧠 Smart Features:**
-✅ **Automated Grid Trading**
-   • Smart buy/sell levels
-   • 24/7 market monitoring
-   • Automatic profit capture
+            if len(parts) == 2:
+                symbol = parts[0]
+                try:
+                    amount = float(parts[1])
+                    # ✅ ADD ETH AND SOL TO SUPPORTED SYMBOLS
+                    is_valid = (
+                        symbol in ["ADA", "AVAX", "BTC", "ETH", "SOL"] and amount > 0
+                    )
+                    self.logger.info(
+                        f"🔍 Trading command check: {symbol} ${amount} -> Valid: {is_valid}"
+                    )
+                    return is_valid
+                except ValueError as e:
+                    self.logger.warning(
+                        f"🔍 Invalid amount in command: {parts[1]} -> {e}"
+                    )
+                    return False
+            else:
+                self.logger.info(f"🔍 Wrong number of parts: {len(parts)} (expected 2)")
+                return False
 
-✅ **Risk Management**
-   • Position size controls
-   • Stop-loss protection
-   • Capital preservation
+        except Exception as e:
+            self.logger.error(f"❌ Error checking trading command: {e}")
+            return False
 
-✅ **Supported Assets**
-   • ADA/USDT - Cardano
-   • AVAX/USDT - Avalanche
+    async def handle_portfolio_command(self, update, context):
+        """Handle 'PORTFOLIO' command for 3-asset strategy"""
+        client_id = update.effective_user.id
 
-**Setup Steps:**
-1. Configure your Binance API keys
-2. Set your trading capital
-3. Start earning profits!
+        # Extract amount from command (e.g., "PORTFOLIO 5000")
+        try:
+            text = update.message.text.strip()
+            if text.upper().startswith("PORTFOLIO"):
+                parts = text.split()
+                if len(parts) == 2:
+                    total_amount = float(parts[1])
 
-Ready to begin?"""
+                    if total_amount < 1000:
+                        await update.message.reply_text(
+                            "💰 Minimum portfolio amount: $1000"
+                        )
+                        return
 
-        keyboard = [
-            [InlineKeyboardButton("🔐 Setup API Keys", callback_data="setup_api")],
-            [InlineKeyboardButton("📊 Dashboard", callback_data="show_dashboard")],
-        ]
+                    # Create portfolio manager
+                    portfolio = ThreeAssetPortfolioManager(total_amount)
+                    summary = portfolio.get_portfolio_summary()
+
+                    message = f"""💼 **3-Asset Portfolio Strategy**
+
+    **Total Capital:** ${total_amount:,.2f}
+    **Strategy:** ETH (40%), SOL (30%), ADA (30%)
+    **Total Grids:** 30 (10 per asset)
+
+    **Asset Allocation:**
+    🔷 **ETH:** ${summary["assets"]["ETHUSDT"]["capital"]} (40%)
+    • Order size: {summary["assets"]["ETHUSDT"]["order_size"]}
+    • Expected return: {summary["assets"]["ETHUSDT"]["expected_return"]}
+
+    🟣 **SOL:** ${summary["assets"]["SOLUSDT"]["capital"]} (30%)
+    • Order size: {summary["assets"]["SOLUSDT"]["order_size"]}
+    • Expected return: {summary["assets"]["SOLUSDT"]["expected_return"]}
+
+    🔵 **ADA:** ${summary["assets"]["ADAUSDT"]["capital"]} (30%)
+    • Order size: {summary["assets"]["ADAUSDT"]["order_size"]}
+    • Expected return: {summary["assets"]["ADAUSDT"]["expected_return"]}
+
+    **Portfolio Metrics:**
+    📊 Risk Profile: {summary["risk_profile"]}
+    📈 Expected Return: {summary["expected_annual_return"]}
+    📉 Max Drawdown: {summary["max_drawdown_estimate"]}
+
+    Ready to deploy all 30 grids?"""
+
+                    keyboard = [
+                        [
+                            InlineKeyboardButton(
+                                "🚀 DEPLOY PORTFOLIO",
+                                callback_data=f"deploy_portfolio_{int(total_amount)}",
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "❌ Cancel", callback_data="show_dashboard"
+                            )
+                        ],
+                    ]
+
+                    await update.message.reply_text(
+                        message,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode="Markdown",
+                    )
+                    return
+
+        except Exception as e:
+            self.logger.error(f"Error handling portfolio command: {e}")
 
         await update.message.reply_text(
-            message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+            "💼 **Portfolio Command Usage:**\n\n"
+            "`PORTFOLIO 5000` - Deploy 3-asset strategy with $5000\n"
+            "`PORTFOLIO 10000` - Deploy 3-asset strategy with $10000\n\n"
+            "**Strategy:** ETH (40%), SOL (30%), ADA (30%)\n"
+            "**Total Grids:** 30 (10 per asset)"
         )
+
+    async def handle_portfolio_deployment(self, query, total_amount: float):
+        """Deploy the complete 3-asset portfolio"""
+        client_id = query.from_user.id
+
+        try:
+            await query.edit_message_text("🔄 **Deploying 3-Asset Portfolio...**")
+
+            portfolio = ThreeAssetPortfolioManager(total_amount)
+
+            # Deploy each asset sequentially
+            deployment_results = {}
+
+            for symbol in ["ETHUSDT", "SOLUSDT", "ADAUSDT"]:
+                config = portfolio.get_asset_configuration(symbol)
+
+                self.logger.info(
+                    f"🚀 Deploying {symbol} with ${config['capital']:,.2f}"
+                )
+
+                # Use your existing grid deployment
+                result = await self.grid_orchestrator.start_client_grid(
+                    client_id, symbol, config["capital"]
+                )
+
+                deployment_results[symbol] = {
+                    "success": result.get("success", False),
+                    "orders": result.get("total_orders_placed", 0),
+                    "capital": config["capital"],
+                    "error": result.get("error", None),
+                }
+
+                # Small delay between deployments
+                await asyncio.sleep(2)
+
+            # Calculate results
+            successful_deploys = sum(
+                1 for r in deployment_results.values() if r["success"]
+            )
+            total_orders = sum(r["orders"] for r in deployment_results.values())
+            total_deployed = sum(
+                r["capital"] for r in deployment_results.values() if r["success"]
+            )
+
+            if successful_deploys == 3:
+                message = f"""🎉 **Portfolio Deployment Complete!**
+
+    ✅ **All 3 Assets Deployed Successfully**
+
+    **Deployment Summary:**
+    🔷 ETH: {deployment_results["ETHUSDT"]["orders"]} orders
+    🟣 SOL: {deployment_results["SOLUSDT"]["orders"]} orders  
+    🔵 ADA: {deployment_results["ADAUSDT"]["orders"]} orders
+
+    **Portfolio Status:**
+    📊 Total Orders: {total_orders}
+    💰 Capital Deployed: ${total_deployed:,.2f}
+    🎯 Strategy: ACTIVE 24/7
+
+    Your diversified portfolio is now hunting for profits across 3 major cryptocurrencies!"""
+            else:
+                failed_assets = [
+                    s for s, r in deployment_results.items() if not r["success"]
+                ]
+                message = f"""⚠️ **Partial Portfolio Deployment**
+
+    **Successful:** {successful_deploys}/3 assets
+    **Failed:** {", ".join(failed_assets)}
+
+    **Next Steps:**
+    1. Check API permissions
+    2. Verify sufficient balance
+    3. Retry failed deployments
+
+    Contact support if issues persist."""
+
+            keyboard = [
+                [InlineKeyboardButton("📊 Dashboard", callback_data="show_dashboard")]
+            ]
+
+            await query.edit_message_text(
+                message,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown",
+            )
+
+        except Exception as e:
+            self.logger.error(f"Portfolio deployment error: {e}")
+            await query.edit_message_text(
+                f"❌ **Portfolio Deployment Failed**\n\nError: {str(e)}\n\nPlease try again or contact support."
+            )

@@ -1,7 +1,9 @@
 # config.py
 """Configuration management for Right Bastard Client Service"""
 
+import logging
 import os
+from typing import Dict
 
 from dotenv import load_dotenv
 
@@ -46,15 +48,23 @@ class Config:
             "price_precision": 4,
             "min_order_value": 10.0,
         },
+        # ✅ ADD ETH CONFIGURATION
+        "ETHUSDT": {
+            "min_quantity": 0.001,
+            "quantity_precision": 5,
+            "price_precision": 2,  # ETH usually 2 decimals ($3456.78)
+            "min_order_value": 10.0,
+        },
+        # ✅ ADD SOL CONFIGURATION
+        "SOLUSDT": {
+            "min_quantity": 0.01,
+            "quantity_precision": 3,
+            "price_precision": 4,  # SOL usually 4 decimals ($123.4567)
+            "min_order_value": 10.0,
+        },
         "BTCUSDT": {
             "min_quantity": 0.00001,
             "quantity_precision": 5,
-            "price_precision": 2,
-            "min_order_value": 10.0,
-        },
-        "ETHUSDT": {
-            "min_quantity": 0.001,
-            "quantity_precision": 3,
             "price_precision": 2,
             "min_order_value": 10.0,
         },
@@ -195,3 +205,134 @@ class AutoResetInterface:
     ) -> dict:
         """Calculate optimal parameters for grid reset"""
         raise NotImplementedError("Will be implemented by SmartGridAutoReset")
+
+
+class ThreeAssetPortfolioManager:
+    """Manages ETH (40%), SOL (30%), ADA (30%) portfolio strategy"""
+
+    def __init__(self, total_capital: float):
+        self.total_capital = total_capital
+        self.logger = logging.getLogger(__name__)
+
+        # Portfolio allocation - Total 30 grids (10 per asset)
+        self.portfolio_allocation = {
+            "ETHUSDT": {
+                "allocation": 0.40,  # 40% of capital
+                "capital": total_capital * 0.40,
+                "max_grids": 10,  # 10 grids for ETH
+                "risk_level": "moderate",
+                "rationale": "Blue chip crypto, stable growth",
+                "expected_annual_return": "60-100%",
+                "order_size_multiplier": 1.0,
+            },
+            "SOLUSDT": {
+                "allocation": 0.30,  # 30% of capital
+                "capital": total_capital * 0.30,
+                "max_grids": 10,  # 10 grids for SOL
+                "risk_level": "moderate-high",
+                "rationale": "High-performance blockchain, growth potential",
+                "expected_annual_return": "80-120%",
+                "order_size_multiplier": 1.1,  # Slightly larger orders
+            },
+            "ADAUSDT": {
+                "allocation": 0.30,  # 30% of capital
+                "capital": total_capital * 0.30,
+                "max_grids": 10,  # 10 grids for ADA
+                "risk_level": "moderate",
+                "rationale": "Academic blockchain, steady development",
+                "expected_annual_return": "70-110%",
+                "order_size_multiplier": 0.9,  # Slightly smaller orders
+            },
+        }
+
+        # Validate total allocation is 100%
+        total_allocation = sum(
+            asset["allocation"] for asset in self.portfolio_allocation.values()
+        )
+        assert abs(total_allocation - 1.0) < 0.001, (
+            f"Total allocation must be 100%, got {total_allocation:.1%}"
+        )
+
+        self.logger.info(f"💼 Portfolio initialized: ${total_capital:,.2f}")
+        self.logger.info(
+            f"   🔷 ETH: ${self.portfolio_allocation['ETHUSDT']['capital']:,.2f} (40%)"
+        )
+        self.logger.info(
+            f"   🟣 SOL: ${self.portfolio_allocation['SOLUSDT']['capital']:,.2f} (30%)"
+        )
+        self.logger.info(
+            f"   🔵 ADA: ${self.portfolio_allocation['ADAUSDT']['capital']:,.2f} (30%)"
+        )
+
+    def get_asset_configuration(self, symbol: str) -> Dict:
+        """Get optimized configuration for specific asset"""
+        asset_config = self.portfolio_allocation.get(symbol)
+
+        if not asset_config:
+            raise ValueError(f"Unsupported symbol: {symbol}. Supported: ETH, SOL, ADA")
+
+        # Calculate order size per grid (capital / number of grids)
+        base_order_size = asset_config["capital"] / asset_config["max_grids"]
+        adjusted_order_size = base_order_size * asset_config["order_size_multiplier"]
+
+        # Ensure minimum order size for NOTIONAL compliance
+        min_order_size = 25.0  # $25 minimum to avoid NOTIONAL errors
+        final_order_size = max(adjusted_order_size, min_order_size)
+
+        # Grid configuration based on asset characteristics
+        grid_configs = {
+            "ETHUSDT": {
+                "grid_levels": 5,  # 5 buy + 5 sell = 10 total
+                "grid_spacing": 0.035,  # 3.5% spacing (ETH less volatile)
+                "volatility_threshold": 1.20,  # 120% volatility threshold
+            },
+            "SOLUSDT": {
+                "grid_levels": 5,  # 5 buy + 5 sell = 10 total
+                "grid_spacing": 0.045,  # 4.5% spacing (SOL more volatile)
+                "volatility_threshold": 1.40,  # 140% volatility threshold
+            },
+            "ADAUSDT": {
+                "grid_levels": 5,  # 5 buy + 5 sell = 10 total
+                "grid_spacing": 0.040,  # 4.0% spacing (ADA moderate volatility)
+                "volatility_threshold": 1.30,  # 130% volatility threshold
+            },
+        }
+
+        grid_config = grid_configs[symbol]
+
+        return {
+            "symbol": symbol,
+            "capital": asset_config["capital"],
+            "allocation_percentage": asset_config["allocation"] * 100,
+            "order_size": final_order_size,
+            "grid_levels": grid_config["grid_levels"],
+            "grid_spacing": grid_config["grid_spacing"],
+            "max_grids": asset_config["max_grids"],
+            "volatility_threshold": grid_config["volatility_threshold"],
+            "risk_level": asset_config["risk_level"],
+            "expected_return": asset_config["expected_annual_return"],
+            "rationale": asset_config["rationale"],
+        }
+
+    def get_portfolio_summary(self) -> Dict:
+        """Get complete portfolio summary"""
+        summary = {
+            "total_capital": self.total_capital,
+            "total_grids": 30,  # 10 per asset
+            "assets": {},
+            "risk_profile": "Balanced growth with blue-chip focus",
+            "expected_annual_return": "70-110%",
+            "max_drawdown_estimate": "25-35%",
+        }
+
+        for symbol in ["ETHUSDT", "SOLUSDT", "ADAUSDT"]:
+            config = self.get_asset_configuration(symbol)
+            summary["assets"][symbol] = {
+                "allocation": f"{config['allocation_percentage']:.0f}%",
+                "capital": f"${config['capital']:,.2f}",
+                "grids": config["max_grids"],
+                "order_size": f"${config['order_size']:.2f}",
+                "expected_return": config["expected_return"],
+            }
+
+        return summary

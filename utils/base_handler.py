@@ -391,3 +391,7 @@ Enter your total trading capital in USD.
                 return True
 
         return False  # Message not handled
+
+    # async def _handle_smart_trading_command(self, update, client_id, text):
+    #     """Temporary - should be overridden in child classes"""
+    #     await update.message.reply_text("🔧 Smart trading commands coming soon!")
