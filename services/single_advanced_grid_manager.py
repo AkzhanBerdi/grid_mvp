@@ -20,6 +20,7 @@ from binance.client import Client
 from models.single_advanced_grid_config import SingleAdvancedGridConfig
 from repositories.client_repository import ClientRepository
 from repositories.trade_repository import TradeRepository
+from services.api_error_notifier import APIErrorNotifier
 from services.fifo_service import FIFOService
 from services.inventory_manager import SingleGridInventoryManager
 from services.market_analysis import MarketAnalysisService
@@ -301,6 +302,8 @@ class SingleAdvancedGridManager:
         self.binance_client = binance_client
         self.client_id = client_id
         self.logger = logging.getLogger(__name__)
+
+        self.error_notifier = APIErrorNotifier()
 
         self.inventory_manager = None  # Will be initialized with capital
         self.volatility_managers: Dict[str, VolatilityBasedRiskManager] = {}
