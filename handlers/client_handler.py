@@ -4,7 +4,7 @@
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from config import ThreeAssetPortfolioManager
+from config import SingleGridPortfolioManager
 from utils.base_handler import BaseClientHandler
 
 
@@ -718,7 +718,7 @@ Error: {error_message}
                         return
 
                     # Create portfolio manager
-                    portfolio = ThreeAssetPortfolioManager(total_amount)
+                    portfolio = SingleGridPortfolioManager(total_amount)
                     summary = portfolio.get_portfolio_summary()
 
                     message = f"""💼 **3-Asset Portfolio Strategy**
@@ -786,7 +786,7 @@ Error: {error_message}
         try:
             await query.edit_message_text("🔄 **Deploying 3-Asset Portfolio...**")
 
-            portfolio = ThreeAssetPortfolioManager(total_amount)
+            portfolio = SingleGridPortfolioManager(total_amount)
 
             # Deploy each asset sequentially
             deployment_results = {}

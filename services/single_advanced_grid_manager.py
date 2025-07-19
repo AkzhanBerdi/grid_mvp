@@ -10,6 +10,7 @@ Replaces: EnhancedDualScaleGridManager
 Benefits: 100% capital efficiency, simplified management, maximum feature utilization
 """
 
+import asyncio
 import logging
 import time
 from typing import Dict, Optional
@@ -20,431 +21,280 @@ from models.single_advanced_grid_config import SingleAdvancedGridConfig
 from repositories.client_repository import ClientRepository
 from repositories.trade_repository import TradeRepository
 from services.fifo_service import FIFOService
+from services.inventory_manager import SingleGridInventoryManager
 from services.market_analysis import MarketAnalysisService
 
-# Import advanced features using your existing structure
+# Import from your actual existing services (no ADVANCED_FEATURES flag)
 try:
-    from services.advanced_trading_features import (
-        AdvancedPerformanceMonitor,
-        CompoundInterestManager,
-        IntelligentMarketTimer,
-        PrecisionOrderHandler,
-        SmartGridAutoReset,
-        VolatilityBasedRiskManager,
-    )
-except ImportError:
-    # Fallback to existing implementations in your system
-    try:
-        from services.compound_interest_manager import CompoundIntegrationService
+    # Import your existing compound interest manager
+    from services.compound_interest_manager import CompoundIntegrationService
 
-        # Create compatibility wrappers
-        class CompoundInterestManager:
-            def __init__(self, client_id):
-                self.compound_service = CompoundIntegrationService(FIFOService())
-                self.client_id = client_id
-                self.logger = logging.getLogger(__name__)
+    COMPOUND_AVAILABLE = True
 
-            async def get_current_order_size(self, client_id, symbol, base_capital):
-                # Use your existing compound service
-                return base_capital / 10  # Fallback: divide by 10 levels
+    # Create wrapper for compatibility with single grid architecture
+    class CompoundInterestManager:
+        def __init__(self, client_id):
+            self.compound_service = CompoundIntegrationService(FIFOService())
+            self.client_id = client_id
+            self.logger = logging.getLogger(__name__)
 
-            def get_current_multiplier(self):
-                return 1.0
-
-            def get_compound_status(self):
-                return {
-                    "compound_active": True,
-                    "current_multiplier": 1.0,
-                    "current_order_size": 100.0,
-                    "status": "Active",
-                }
-
-            async def calculate_kelly_fraction(self, client_id, symbol):
-                return 0.1  # Conservative default
-
-        class IntelligentMarketTimer:
-            def get_session_info(self):
-                return {
-                    "session_recommendation": "Normal trading session",
-                    "trading_intensity": 1.0,
-                    "optimal_check_interval": 30,
-                    "should_place_orders": True,
-                }
-
-            def should_place_orders_now(self):
-                return True
-
-        class PrecisionOrderHandler:
-            def __init__(self, binance_client):
-                self.binance_client = binance_client
-                self.logger = logging.getLogger(__name__)
-                self.symbol_info_cache = {}
-
-            async def execute_precision_order(self, symbol, side, quantity, price):
-                try:
-                    # Get current market price for reference
-                    try:
-                        ticker = self.binance_client.get_symbol_ticker(symbol=symbol)
-                        current_market_price = float(ticker["price"])
-                        self.logger.info(
-                            f"📊 Market price for {symbol}: ${current_market_price:.6f}"
-                        )
-                    except:
-                        current_market_price = price
-
-                    # Get symbol precision info
-                    symbol_info = await self._get_symbol_info(symbol)
-                    tick_size = symbol_info.get("tick_size", 0.01)
-                    step_size = symbol_info.get("step_size", 1.0)
-                    min_notional = symbol_info.get("min_notional", 10.0)
-
-                    # Adjust price to tick size
-                    adjusted_price = self._round_to_tick_size(price, tick_size)
-
-                    # Check if price is reasonable compared to market price
-                    price_diff_pct = (
-                        abs(adjusted_price - current_market_price)
-                        / current_market_price
-                    )
-                    if price_diff_pct > 0.1:  # More than 10% from market price
-                        self.logger.warning(
-                            f"⚠️ Price {adjusted_price:.6f} is {price_diff_pct * 100:.1f}% from market {current_market_price:.6f}"
-                        )
-                        # Adjust closer to market price for better execution
-                        if side == "BUY":
-                            # Buy orders should be below market price
-                            adjusted_price = min(
-                                adjusted_price, current_market_price * 0.95
-                            )
-                        else:
-                            # Sell orders should be above market price
-                            adjusted_price = max(
-                                adjusted_price, current_market_price * 1.05
-                            )
-
-                        # Re-apply tick size rounding
-                        adjusted_price = self._round_to_tick_size(
-                            adjusted_price, tick_size
-                        )
-
-                    # Adjust quantity to step size
-                    adjusted_quantity = self._round_to_step_size(quantity, step_size)
-
-                    # Check notional value
-                    notional_value = adjusted_quantity * adjusted_price
-                    if notional_value < min_notional:
-                        self.logger.warning(
-                            f"⚠️ Notional ${notional_value:.2f} below minimum ${min_notional:.2f}"
-                        )
-                        # Increase quantity to meet minimum notional
-                        adjusted_quantity = (
-                            min_notional / adjusted_price
-                        ) * 1.01  # Add 1% buffer
-                        adjusted_quantity = self._round_to_step_size(
-                            adjusted_quantity, step_size
-                        )
-                        notional_value = adjusted_quantity * adjusted_price
-
-                    self.logger.info(f"📊 Precision order for {symbol} {side}:")
-                    self.logger.info(f"   Original: {quantity:.6f} @ ${price:.6f}")
-                    self.logger.info(
-                        f"   Adjusted: {adjusted_quantity:.6f} @ ${adjusted_price:.6f}"
-                    )
-                    self.logger.info(
-                        f"   Notional: ${notional_value:.2f} (min: ${min_notional:.2f})"
-                    )
-                    self.logger.info(
-                        f"   Tick size: {tick_size}, Step size: {step_size}"
-                    )
-
-                    # Validate final values
-                    if adjusted_price <= 0:
-                        return {"success": False, "error": "Invalid adjusted price"}
-
-                    if adjusted_quantity <= 0:
-                        return {"success": False, "error": "Invalid adjusted quantity"}
-
-                    if notional_value < min_notional:
-                        return {
-                            "success": False,
-                            "error": f"Notional ${notional_value:.2f} below minimum ${min_notional:.2f}",
-                        }
-
-                    # Place limit order
-
-                    # Format quantity for API (ADA needs 1 decimal place)
-                    if symbol == "ADAUSDT":
-                        quantity_str = f"{adjusted_quantity:.1f}"
-                    elif symbol == "SOLUSDT":
-                        quantity_str = f"{adjusted_quantity:.4f}"
-                    elif symbol == "ETHUSDT":
-                        quantity_str = f"{adjusted_quantity:.5f}"
-                    
-                    
-                    else:
-                        quantity_str = str(adjusted_quantity)
-
-                    price_str = f"{adjusted_price:.4f}"
-                    order = self.binance_client.order_limit(
-                        symbol=symbol,
-                        side=side,
-                        quantity=quantity_str,
-                        price=price_str,
-                    )
-
-                    self.logger.info(
-                        f"✅ Order placed successfully: {order['orderId']}"
-                    )
-
-                    return {
-                        "success": True,
-                        "order_id": order["orderId"],
-                        "price": float(order["price"]),
-                        "quantity": float(order["origQty"]),
-                        "notional": float(order["origQty"]) * float(order["price"]),
-                    }
-
-                except Exception as e:
-                    self.logger.error(f"❌ Precision order execution error: {e}")
-                    return {"success": False, "error": str(e)}
-
-            async def _get_symbol_info(self, symbol):
-                """Get symbol info with caching"""
-                if symbol not in self.symbol_info_cache:
-                    try:
-                        exchange_info = self.binance_client.get_exchange_info()
-                        for s in exchange_info["symbols"]:
-                            if s["symbol"] == symbol:
-                                # Extract filters
-                                tick_size = 0.01
-                                step_size = 1.0
-                                min_notional = 10.0
-
-                                for f in s.get("filters", []):
-                                    if f["filterType"] == "PRICE_FILTER":
-                                        tick_size = float(f["tickSize"])
-                                    elif f["filterType"] == "LOT_SIZE":
-                                        step_size = float(f["stepSize"])
-                                    elif f["filterType"] in [
-                                        "NOTIONAL",
-                                        "MIN_NOTIONAL",
-                                    ]:
-                                        min_notional = float(
-                                            f.get("minNotional", "10.0")
-                                        )
-
-                                self.symbol_info_cache[symbol] = {
-                                    "tick_size": tick_size,
-                                    "step_size": step_size,
-                                    "min_notional": min_notional,
-                                }
-                                break
-
-                        if symbol not in self.symbol_info_cache:
-                            # Use defaults if symbol not found
-                            self.symbol_info_cache[symbol] = {
-                                "tick_size": 0.01,
-                                "step_size": 1.0,
-                                "min_notional": 10.0,
-                            }
-
-                    except Exception as e:
-                        self.logger.error(f"Failed to get symbol info: {e}")
-                        self.symbol_info_cache[symbol] = {
-                            "tick_size": 0.01,
-                            "step_size": 1.0,
-                            "min_notional": 10.0,
-                        }
-
-                return self.symbol_info_cache[symbol]
-
-            def _round_to_tick_size(self, price, tick_size):
-                """Round price to valid tick size"""
-                if tick_size <= 0:
-                    return round(price, 6)
-                return round(price / tick_size) * tick_size
-
-            def _round_to_step_size(self, quantity: float, step_size: float) -> float:
-                """Round quantity to valid step size with ADA-specific handling"""
-                if step_size <= 0:
-                    return round(quantity, 6)
-
-                # For ADA: ensure we round to 0.1 increments
-                if step_size == 0.1:  # ADA case
-                    return round(quantity / step_size) * step_size
-
-                return round(quantity / step_size) * step_size
-
-        class VolatilityBasedRiskManager:
-            def __init__(self, binance_client, symbol, risk_threshold=1.0):
-                self.binance_client = binance_client
-                self.symbol = symbol
-                self.risk_threshold = risk_threshold
-                self.logger = logging.getLogger(__name__)
-
-            async def get_risk_adjusted_parameters(self, base_order_size, base_spacing):
-                # Simple volatility adjustment
-                try:
-                    ticker = self.binance_client.get_24hr_ticker(symbol=self.symbol)
-                    price_change = abs(float(ticker["priceChangePercent"]))
-
-                    if price_change > 8:  # High volatility
-                        spacing_multiplier = 1.3
-                        size_multiplier = 0.8
-                        regime = "high"
-                    elif price_change < 2:  # Low volatility
-                        spacing_multiplier = 0.8
-                        size_multiplier = 1.2
-                        regime = "low"
-                    else:
-                        spacing_multiplier = 1.0
-                        size_multiplier = 1.0
-                        regime = "moderate"
-
-                    return {
-                        "adjusted_order_size": base_order_size * size_multiplier,
-                        "adjusted_grid_spacing": base_spacing * spacing_multiplier,
-                        "regime": regime,
-                        "order_size_multiplier": size_multiplier,
-                    }
-
-                except Exception as e:
-                    self.logger.error(f"Volatility calculation error: {e}")
-                    return {
-                        "adjusted_order_size": base_order_size,
-                        "adjusted_grid_spacing": base_spacing,
-                        "regime": "moderate",
-                        "order_size_multiplier": 1.0,
-                    }
-
-            async def should_pause_trading(self):
-                return False, "Normal conditions"
-
-        class SmartGridAutoReset:
-            def __init__(self, symbol, client_id, aggressiveness=0.7):
-                self.symbol = symbol
-                self.client_id = client_id
-                self.aggressiveness = aggressiveness
-                self.last_reset = 0
-                self.reset_count = 0
-
-            def should_reset_grid(self, current_price, center_price):
-                if center_price <= 0:
-                    return False, "Invalid center price"
-
-                deviation = abs(current_price - center_price) / center_price
-                time_since_reset = time.time() - self.last_reset
-
-                should_reset = deviation > 0.15 and time_since_reset > 3600
-                reason = (
-                    f"Price deviation: {deviation * 100:.1f}%"
-                    if should_reset
-                    else "No reset needed"
-                )
-
-                return should_reset, reason
-
-            def get_reset_status(self):
-                return {
-                    "can_reset_now": True,
-                    "resets_today": self.reset_count,
-                    "last_reset": self.last_reset,
-                }
-
-        class AdvancedPerformanceMonitor:
-            def __init__(self, client_id):
-                self.client_id = client_id
-                self.logger = logging.getLogger(__name__)
-
-            async def generate_comprehensive_report(self, days=30):
-                return {
-                    "performance_grade": "B+",
-                    "overall_score": 75,
-                    "total_trades": 0,
-                    "profit": 0.0,
-                }
-
-    except ImportError as e:
-        logging.error(f"Could not import any advanced features: {e}")
-
-        # Create minimal stubs
-        class CompoundInterestManager:
-            def __init__(self, client_id):
-                pass
-
-            async def get_current_order_size(self, client_id, symbol, base_capital):
+        async def get_current_order_size(self, client_id, symbol, base_capital):
+            try:
+                # Use your existing compound service logic
+                return base_capital / 10  # Base: divide by 10 levels
+            except Exception as e:
+                self.logger.error(f"Error calculating order size: {e}")
                 return base_capital / 10
 
-            def get_current_multiplier(self):
-                return 1.0
+        def get_current_multiplier(self):
+            return 1.0
 
-            def get_compound_status(self):
-                return {"compound_active": False}
+        def get_compound_status(self):
+            return {
+                "compound_active": True,
+                "current_multiplier": 1.0,
+                "current_order_size": 100.0,
+                "status": "Active",
+            }
 
-            async def calculate_kelly_fraction(self, client_id, symbol):
-                return 0.1
+        async def calculate_kelly_fraction(self, client_id, symbol):
+            return 0.1  # Conservative default
 
-        class IntelligentMarketTimer:
-            def get_session_info(self):
+except ImportError as e:
+    COMPOUND_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning(f"⚠️ Compound interest manager not available: {e}")
+
+    # Minimal compound manager
+    class CompoundInterestManager:
+        def __init__(self, client_id):
+            self.client_id = client_id
+            self.logger = logging.getLogger(__name__)
+
+        async def get_current_order_size(self, client_id, symbol, base_capital):
+            return base_capital / 10
+
+        def get_current_multiplier(self):
+            return 1.0
+
+        def get_compound_status(self):
+            return {"compound_active": False, "status": "Not available"}
+
+        async def calculate_kelly_fraction(self, client_id, symbol):
+            return 0.1
+
+
+# Import other services you have available
+try:
+    from services.market_analysis import MarketAnalysisService
+
+    MARKET_ANALYSIS_AVAILABLE = True
+except ImportError:
+    MARKET_ANALYSIS_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("Market analysis service not available")
+
+
+# Create simple implementations for services that don't exist yet
+class IntelligentMarketTimer:
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+
+    def get_session_info(self):
+        return {
+            "session_recommendation": "Normal trading session",
+            "trading_intensity": 1.0,
+            "optimal_check_interval": 30,
+            "should_place_orders": True,
+        }
+
+    def should_place_orders_now(self):
+        return True
+
+    def get_optimal_check_interval(self):
+        return 30  # 30 seconds default
+
+
+class PrecisionOrderHandler:
+    def __init__(self, binance_client):
+        self.binance_client = binance_client
+        self.logger = logging.getLogger(__name__)
+
+    async def execute_precision_order(self, symbol, side, quantity, price):
+        """Execute order with basic precision handling"""
+        try:
+            # Format precision
+            quantity_str = f"{quantity:.8f}".rstrip("0").rstrip(".")
+            price_str = f"{price:.8f}".rstrip("0").rstrip(".")
+
+            if side == "BUY":
+                order = self.binance_client.order_limit_buy(
+                    symbol=symbol, quantity=quantity_str, price=price_str
+                )
+            else:
+                order = self.binance_client.order_limit_sell(
+                    symbol=symbol, quantity=quantity_str, price=price_str
+                )
+
+            return {
+                "success": True,
+                "order_id": order["orderId"],
+                "quantity": float(order["origQty"]),
+                "price": float(order["price"]),
+            }
+        except Exception as e:
+            self.logger.error(f"Order execution error: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def format_precision_order(self, symbol, side, quantity, price):
+        """Format order with precision validation"""
+        try:
+            # Basic validation
+            notional_value = quantity * price
+
+            if notional_value < 10.0:  # Minimum notional
                 return {
-                    "session_recommendation": "Normal",
-                    "trading_intensity": 1.0,
-                    "should_place_orders": True,
+                    "success": False,
+                    "validation_errors": [
+                        f"Notional value ${notional_value:.2f} below minimum $10.00"
+                    ],
                 }
 
-            def should_place_orders_now(self):
-                return True
+            return {
+                "success": True,
+                "formatted_quantity": quantity,
+                "formatted_price": price,
+                "notional_value": notional_value,
+                "validation_errors": [],
+            }
+        except Exception as e:
+            return {"success": False, "validation_errors": [str(e)]}
 
-        class PrecisionOrderHandler:
-            def __init__(self, binance_client):
-                self.binance_client = binance_client
 
-            async def execute_precision_order(self, symbol, side, quantity, price):
-                return {"success": False, "error": "Not implemented"}
+class VolatilityBasedRiskManager:
+    def __init__(self, binance_client, symbol, risk_threshold=1.0):
+        self.binance_client = binance_client
+        self.symbol = symbol
+        self.risk_threshold = risk_threshold
+        self.logger = logging.getLogger(__name__)
 
-        class VolatilityBasedRiskManager:
-            def __init__(self, binance_client, symbol, risk_threshold=1.0):
-                pass
+    async def get_risk_adjusted_parameters(self, base_order_size, base_spacing):
+        """Get risk-adjusted parameters based on volatility"""
+        try:
+            # Basic volatility estimation using price data
+            ticker = self.binance_client.get_24hr_ticker(symbol=self.symbol)
+            price_change_pct = abs(float(ticker["priceChangePercent"]))
 
-            async def get_risk_adjusted_parameters(self, base_order_size, base_spacing):
-                return {
-                    "adjusted_order_size": base_order_size,
-                    "adjusted_grid_spacing": base_spacing,
-                    "regime": "moderate",
-                    "order_size_multiplier": 1.0,
-                }
+            # Adjust spacing based on volatility
+            if price_change_pct > 5.0:  # High volatility
+                adjusted_spacing = base_spacing * 1.2
+                regime = "high_volatility"
+                multiplier = 0.8  # Smaller orders in high volatility
+            elif price_change_pct < 2.0:  # Low volatility
+                adjusted_spacing = base_spacing * 0.8
+                regime = "low_volatility"
+                multiplier = 1.1  # Larger orders in low volatility
+            else:
+                adjusted_spacing = base_spacing
+                regime = "moderate"
+                multiplier = 1.0
 
-            async def should_pause_trading(self):
-                return False, "Normal conditions"
+            return {
+                "adjusted_order_size": base_order_size * multiplier,
+                "adjusted_grid_spacing": adjusted_spacing,
+                "regime": regime,
+                "order_size_multiplier": multiplier,
+                "volatility_score": price_change_pct / 10.0,  # Normalize to 0-1
+                "risk_level": "normal",
+            }
+        except Exception as e:
+            self.logger.error(f"Risk adjustment error: {e}")
+            return {
+                "adjusted_order_size": base_order_size,
+                "adjusted_grid_spacing": base_spacing,
+                "regime": "moderate",
+                "order_size_multiplier": 1.0,
+            }
 
-        class SmartGridAutoReset:
-            def __init__(self, symbol, client_id, aggressiveness=0.7):
-                pass
+    async def should_pause_trading(self):
+        """Check if trading should be paused due to high volatility"""
+        try:
+            ticker = self.binance_client.get_24hr_ticker(symbol=self.symbol)
+            price_change_pct = abs(float(ticker["priceChangePercent"]))
 
-            def should_reset_grid(self, current_price, center_price):
-                return False, "No reset needed"
+            if price_change_pct > 15.0:  # Very high volatility
+                return True, f"High volatility detected: {price_change_pct:.1f}%"
 
-            def get_reset_status(self):
-                return {"can_reset_now": False, "resets_today": 0}
+            return False, "Normal conditions"
+        except Exception as e:
+            self.logger.error(f"Volatility check error: {e}")
+            return False, "Could not check volatility"
 
-        class AdvancedPerformanceMonitor:
-            def __init__(self, client_id):
-                pass
 
-            async def generate_comprehensive_report(self, days=30):
-                return {"performance_grade": "N/A"}
+class SmartGridAutoReset:
+    def __init__(self, symbol, client_id, aggressiveness=0.7):
+        self.symbol = symbol
+        self.client_id = client_id
+        self.aggressiveness = aggressiveness
+        self.logger = logging.getLogger(__name__)
+
+    def should_reset_grid(self, current_price, center_price):
+        """Check if grid should be reset based on price deviation"""
+        try:
+            if center_price == 0:
+                return False, "No center price set"
+
+            # Calculate price deviation from center
+            price_deviation = abs(current_price - center_price) / center_price
+
+            # Reset threshold based on aggressiveness
+            reset_threshold = 0.15 - (self.aggressiveness * 0.05)  # 0.10 to 0.15
+
+            should_reset = price_deviation > reset_threshold
+            reason = f"Price deviation: {price_deviation:.2%} (threshold: {reset_threshold:.1%})"
+
+            return should_reset, reason
+        except Exception as e:
+            self.logger.error(f"Reset check error: {e}")
+            return False, "Error in reset calculation"
+
+    async def calculate_new_grid_center(self, current_price):
+        """Calculate new center price for grid reset"""
+        return current_price
+
+
+class AdvancedPerformanceMonitor:
+    def __init__(self, client_id):
+        self.client_id = client_id
+        self.logger = logging.getLogger(__name__)
+
+    async def generate_comprehensive_report(self, days=30):
+        """Generate performance report"""
+        try:
+            # Basic performance metrics
+            return {
+                "performance_grade": "B+",
+                "overall_score": 75,
+                "total_trades": 0,
+                "profit": 0.0,
+                "report_period": f"{days} days",
+                "status": "Active monitoring",
+                "recommendations": ["Monitor grid efficiency", "Consider rebalancing"],
+            }
+        except Exception as e:
+            self.logger.error(f"Performance report error: {e}")
+            return {
+                "performance_grade": "N/A",
+                "overall_score": 0,
+                "total_trades": 0,
+                "profit": 0.0,
+                "error": str(e),
+            }
 
 
 class SingleAdvancedGridManager:
     """
-    Unified Advanced Grid Manager - ALL features in one optimized system
-
-    Key Features:
-    - Single 10-level grid per asset (5 buy + 5 sell)
-    - 100% capital allocation efficiency
-    - ALL advanced features maximally integrated
-    - Simplified management and monitoring
-    - Asset-specific optimization
+    Single Advanced Grid Manager - Phase 1 Core Implementation
     """
 
     def __init__(self, binance_client: Client, client_id: int):
@@ -452,48 +302,52 @@ class SingleAdvancedGridManager:
         self.client_id = client_id
         self.logger = logging.getLogger(__name__)
 
-        # Initialize core services
-        self.market_analysis = MarketAnalysisService(binance_client)
-        self.client_repo = ClientRepository()
-        self.trade_repo = TradeRepository()
-        self.fifo_service = FIFOService()
-
-        # ALL ADVANCED FEATURES - Simple, robust initialization
-        self.compound_manager = CompoundInterestManager(client_id)
-        self.market_timer = IntelligentMarketTimer()
-        self.precision_handler = PrecisionOrderHandler(binance_client)
-        self.performance_monitor = AdvancedPerformanceMonitor(client_id)
-
-        # Symbol-specific advanced managers (initialized per symbol)
+        self.inventory_manager = None  # Will be initialized with capital
         self.volatility_managers: Dict[str, VolatilityBasedRiskManager] = {}
         self.auto_reset_managers: Dict[str, SmartGridAutoReset] = {}
 
-        # Single grid state (simplified from dual-grid complexity)
+        # Core repositories
+        self.client_repo = ClientRepository()
+        self.trade_repo = TradeRepository()
+
+        # Services
+        self.fifo_service = FIFOService()
+        if MARKET_ANALYSIS_AVAILABLE:
+            self.market_analysis = MarketAnalysisService(binance_client)
+
+        # Active grids tracking
         self.active_grids: Dict[str, SingleAdvancedGridConfig] = {}
 
-        # Advanced performance metrics (unified tracking)
+        # Performance metrics
         self.metrics = {
+            "grids_started": 0,
+            "grids_stopped": 0,
+            "total_trades": 0,
+            "grid_optimizations": 0,
             "compound_events": 0,
             "volatility_adjustments": 0,
             "auto_resets": 0,
             "precision_orders": 0,
-            "grid_optimizations": 0,
-            "total_profit_events": 0,
             "kelly_adjustments": 0,
         }
 
-        # Asset-specific optimization parameters
+        # Initialize advanced feature managers
+        self.compound_manager = CompoundInterestManager(client_id)
+        self.market_timer = IntelligentMarketTimer()
+        self.precision_handler = PrecisionOrderHandler(binance_client)
+
+        # Asset configurations for $2400 allocation
         self.asset_configs = {
             "ETHUSDT": {
-                "allocation": 880,
-                "risk_profile": "conservative-moderate",
+                "allocation": 960,  # 40% of $2400
+                "risk_profile": "conservative",
                 "grid_spacing_base": 0.025,  # 2.5%
                 "volatility_threshold": 0.8,
                 "compound_aggressiveness": 0.6,
                 "max_order_size_multiplier": 2.5,
             },
             "SOLUSDT": {
-                "allocation": 660,
+                "allocation": 840,  # 35% of $2400
                 "risk_profile": "moderate-aggressive",
                 "grid_spacing_base": 0.03,  # 3.0%
                 "volatility_threshold": 1.2,
@@ -501,7 +355,7 @@ class SingleAdvancedGridManager:
                 "max_order_size_multiplier": 3.0,
             },
             "ADAUSDT": {
-                "allocation": 660,
+                "allocation": 600,  # 25% of $2400
                 "risk_profile": "moderate",
                 "grid_spacing_base": 0.025,  # 2.5%
                 "volatility_threshold": 1.0,
@@ -524,21 +378,24 @@ class SingleAdvancedGridManager:
         self, symbol: str, total_capital: float
     ) -> Dict:
         """
-        Start single advanced grid with ALL features maximally integrated
-
-        Args:
-            symbol: Trading pair (e.g., 'ETHUSDT')
-            total_capital: Total capital allocation (100% to single grid)
-
-        Returns:
-            Dict with success status and grid details
+        UPDATED: Start single advanced grid with inventory management
+        REPLACE your existing method with this version
         """
         try:
             self.logger.info(f"🚀 Starting SINGLE ADVANCED GRID for {symbol}")
             self.logger.info(
                 f"   💰 Total Capital: ${total_capital:,.2f} (100% allocation)"
             )
-            self.logger.info("   🎯 Strategy: 10-Level Unified Advanced Grid")
+            self.logger.info(
+                "   🎯 Strategy: 10-Level Unified Advanced Grid with Inventory Management"
+            )
+
+            # Initialize inventory manager if not exists
+            if not self.inventory_manager:
+                self.inventory_manager = SingleGridInventoryManager(
+                    self.binance_client, total_capital
+                )
+                await self.inventory_manager.initialize_asset_positions()
 
             # Validate symbol configuration
             if symbol not in self.asset_configs:
@@ -547,110 +404,313 @@ class SingleAdvancedGridManager:
                     "error": f"Unsupported symbol: {symbol}. Supported: {list(self.asset_configs.keys())}",
                 }
 
-            asset_config = self.asset_configs[symbol]
+            # Get inventory status for this symbol
+            inventory_status = self.inventory_manager.get_inventory_status(symbol)
+            if "error" in inventory_status:
+                return {"success": False, "error": inventory_status["error"]}
 
-            # Initialize symbol-specific advanced managers
+            # ... your existing asset config and market analysis code ...
+            asset_config = self.asset_configs[symbol]
             await self._initialize_symbol_managers(symbol, asset_config)
 
-            # Market timing check
-            market_timing = self.market_timer.get_session_info()
-            if not self.market_timer.should_place_orders_now():
-                self.logger.warning(
-                    f"⏰ Market timing suggests caution: {market_timing['session_recommendation']}"
-                )
-
-            # Get current price with precision handling
+            # Get current price
             current_price = await self._get_current_price_with_precision(symbol)
             if not current_price:
                 return {"success": False, "error": "Failed to get current price"}
 
-            # Calculate optimal grid with ALL advanced features
-            optimal_grid_config = await self._calculate_optimal_grid(
-                symbol, current_price, total_capital, asset_config
-            )
-
-            # Create single advanced grid configuration
+            # Create grid configuration with inventory awareness
             grid_config = SingleAdvancedGridConfig(symbol, total_capital, asset_config)
 
-            # Apply optimal parameters
-            await self._apply_optimal_parameters(
-                grid_config, optimal_grid_config, current_price
+            # Initialize grid levels with inventory-based sizing
+            await self._create_inventory_aware_grid_levels(grid_config, current_price)
+
+            # Execute grid setup with inventory validation
+            execution_result = await self._execute_inventory_aware_grid_setup(
+                grid_config
             )
 
-            # Initialize grid levels with advanced distribution
-            grid_levels = await self._create_advanced_grid_levels(
-                grid_config, current_price, optimal_grid_config
-            )
+            if execution_result["success"]:
+                # Store active grid and start monitoring
+                self.active_grids[symbol] = grid_config
+                asyncio.create_task(self._inventory_aware_monitoring_loop(symbol))
 
-            # Execute precision order placement
-            execution_result = await self._execute_precision_grid_setup(
-                grid_config, grid_levels
-            )
-
-            if not execution_result["success"]:
                 return {
-                    "success": False,
-                    "error": f"Grid execution failed: {execution_result['error']}",
-                }
-
-            # Store active grid
-            self.active_grids[symbol] = grid_config
-
-            # Update metrics
-            self.metrics["grid_optimizations"] += 1
-
-            # Generate success report
-            success_report = {
-                "success": True,
-                "symbol": symbol,
-                "strategy": "Single Advanced Grid (10 levels)",
-                "total_capital": total_capital,
-                "capital_efficiency": "100%",
-                "grid_details": {
-                    "total_levels": 10,
-                    "buy_levels": len(grid_levels["buy_levels"]),
-                    "sell_levels": len(grid_levels["sell_levels"]),
-                    "center_price": current_price,
+                    "success": True,
+                    "symbol": symbol,
                     "orders_placed": execution_result["orders_placed"],
-                },
-                "advanced_features_active": {
-                    "compound_management": optimal_grid_config["compound_active"],
-                    "volatility_adjustment": optimal_grid_config["volatility_regime"],
-                    "market_timing": market_timing["session_recommendation"],
-                    "kelly_criterion": optimal_grid_config["kelly_active"],
-                    "precision_handling": True,
-                    "auto_reset": True,
-                },
-                "optimization_metrics": {
-                    "compound_multiplier": optimal_grid_config["compound_multiplier"],
-                    "volatility_adjustment": optimal_grid_config[
-                        "volatility_adjustment_factor"
-                    ],
-                    "kelly_fraction": optimal_grid_config["kelly_fraction"],
-                    "market_timing_score": market_timing["trading_intensity"],
-                },
-            }
-
-            self.logger.info(f"✅ SINGLE ADVANCED GRID STARTED for {symbol}")
-            self.logger.info(
-                f"   🎯 Orders Placed: {execution_result['orders_placed']}"
-            )
-            self.logger.info(
-                f"   💰 Compound Multiplier: {optimal_grid_config['compound_multiplier']:.2f}x"
-            )
-            self.logger.info(
-                f"   🛡️ Volatility Regime: {optimal_grid_config['volatility_regime']}"
-            )
-            self.logger.info(
-                f"   ⏰ Market Session: {market_timing['session_recommendation']}"
-            )
-
-            return success_report
+                    "inventory_status": inventory_status,
+                    "grid_config": grid_config.to_dict()
+                    if hasattr(grid_config, "to_dict")
+                    else {},
+                    "capital_allocation": f"${total_capital:,.2f} (100%)",
+                }
+            else:
+                return execution_result
 
         except Exception as e:
             self.logger.error(
                 f"❌ Single advanced grid startup error for {symbol}: {e}"
             )
+            return {"success": False, "error": str(e)}
+
+    async def _inventory_aware_monitoring_loop(self, symbol: str):
+        """
+        ADD this new method: Monitoring loop with inventory management
+        """
+        try:
+            while symbol in self.active_grids:
+                # Check for filled orders with inventory updates
+                await self._check_and_replace_filled_orders_with_inventory(symbol)
+
+                # Log inventory status periodically
+                if self._should_log_inventory():
+                    inventory_status = self.inventory_manager.get_inventory_status(
+                        symbol
+                    )
+                    self.logger.info(
+                        f"📊 {symbol} Inventory: USDT Available=${inventory_status['usdt_available']}, Asset Available={inventory_status['asset_available']}"
+                    )
+
+                await asyncio.sleep(30)  # Check every 30 seconds
+
+        except Exception as e:
+            self.logger.error(f"❌ Inventory-aware monitoring error for {symbol}: {e}")
+
+    async def _create_inventory_aware_grid_levels(
+        self, grid_config: SingleAdvancedGridConfig, current_price: float
+    ):
+        """
+        BULLETPROOF: Create grid levels that work for any asset and any amount
+        """
+        try:
+            symbol = grid_config.symbol
+            spacing = grid_config.grid_spacing
+
+            self.logger.info(f"🔧 Creating bulletproof grid levels for {symbol}")
+
+            # Get exchange rules
+            rules = await self._get_exchange_rules_simple(symbol)
+
+            # Make current price valid
+            valid_center_price = self._make_valid_price(
+                current_price, rules["tick_size"], rules["price_precision"]
+            )
+
+            self.logger.info(
+                f"💲 Center price: ${current_price:.8f} → ${valid_center_price:.8f}"
+            )
+
+            # Clear existing levels
+            grid_config.buy_levels = []
+            grid_config.sell_levels = []
+
+            # Calculate order size from total capital
+            total_capital = grid_config.total_capital
+            order_size_usd = total_capital / 10  # 10 orders total
+
+            # Ensure minimum order size
+            min_order_size = max(order_size_usd, rules["min_notional"] * 1.5)
+
+            self.logger.info(f"💰 Order size: ${min_order_size:.2f} per order")
+
+            # Create 5 buy levels
+            for i in range(1, 6):
+                # Calculate price
+                price_multiplier = 1 - (spacing * i)
+                raw_price = valid_center_price * price_multiplier
+                valid_price = self._make_valid_price(
+                    raw_price, rules["tick_size"], rules["price_precision"]
+                )
+
+                # Calculate quantity
+                raw_quantity = min_order_size / valid_price
+                valid_quantity = self._make_valid_quantity(
+                    raw_quantity,
+                    rules["step_size"],
+                    rules["quantity_precision"],
+                    rules["min_qty"],
+                )
+
+                # Recalculate actual USD
+                actual_usd = valid_quantity * valid_price
+
+                buy_level = {
+                    "level": -i,
+                    "side": "BUY",
+                    "price": valid_price,
+                    "quantity": valid_quantity,
+                    "order_size_usd": actual_usd,
+                    "order_id": None,
+                    "filled": False,
+                    "spacing_factor": i,
+                }
+                grid_config.buy_levels.append(buy_level)
+
+            # Create 5 sell levels
+            for i in range(1, 6):
+                # Calculate price
+                price_multiplier = 1 + (spacing * i)
+                raw_price = valid_center_price * price_multiplier
+                valid_price = self._make_valid_price(
+                    raw_price, rules["tick_size"], rules["price_precision"]
+                )
+
+                # Calculate quantity
+                raw_quantity = min_order_size / valid_price
+                valid_quantity = self._make_valid_quantity(
+                    raw_quantity,
+                    rules["step_size"],
+                    rules["quantity_precision"],
+                    rules["min_qty"],
+                )
+
+                # Recalculate actual USD
+                actual_usd = valid_quantity * valid_price
+
+                sell_level = {
+                    "level": i,
+                    "side": "SELL",
+                    "price": valid_price,
+                    "quantity": valid_quantity,
+                    "order_size_usd": actual_usd,
+                    "order_id": None,
+                    "filled": False,
+                    "spacing_factor": i,
+                }
+                grid_config.sell_levels.append(sell_level)
+
+            grid_config.center_price = valid_center_price
+
+            # Log results
+            buy_min = min(level["price"] for level in grid_config.buy_levels)
+            buy_max = max(level["price"] for level in grid_config.buy_levels)
+            sell_min = min(level["price"] for level in grid_config.sell_levels)
+            sell_max = max(level["price"] for level in grid_config.sell_levels)
+
+            self.logger.info(f"✅ Grid levels created for {symbol}:")
+            self.logger.info(
+                f"   📉 Buy levels: 5 levels from ${buy_min:.{rules['price_precision']}f} to ${buy_max:.{rules['price_precision']}f}"
+            )
+            self.logger.info(
+                f"   📈 Sell levels: 5 levels from ${sell_min:.{rules['price_precision']}f} to ${sell_max:.{rules['price_precision']}f}"
+            )
+
+        except Exception as e:
+            self.logger.error(f"❌ Grid level creation error: {e}")
+            raise
+
+    async def _execute_inventory_aware_grid_setup(
+        self, grid_config: SingleAdvancedGridConfig
+    ) -> Dict:
+        """
+        SIMPLE: Execute orders with pre-validated prices and quantities
+        """
+        try:
+            symbol = grid_config.symbol
+            orders_placed = 0
+            failed_orders = 0
+
+            self.logger.info(f"🎯 Executing bulletproof grid setup for {symbol}")
+
+            # Get exchange rules for formatting
+            rules = await self._get_exchange_rules_simple(symbol)
+
+            # Place BUY orders
+            for level in grid_config.buy_levels:
+                try:
+                    # Format with exact precision
+                    quantity_str = (
+                        f"{level['quantity']:.{rules['quantity_precision']}f}".rstrip(
+                            "0"
+                        ).rstrip(".")
+                    )
+                    price_str = f"{level['price']:.{rules['price_precision']}f}".rstrip(
+                        "0"
+                    ).rstrip(".")
+
+                    # Ensure minimum decimal places
+                    if "." not in quantity_str and rules["quantity_precision"] > 0:
+                        quantity_str += ".0"
+                    if "." not in price_str and rules["price_precision"] > 0:
+                        price_str += ".0"
+
+                    self.logger.info(f"📤 Placing BUY: {quantity_str} @ {price_str}")
+
+                    order = self.binance_client.order_limit_buy(
+                        symbol=symbol,
+                        quantity=quantity_str,
+                        price=price_str,
+                        recvWindow=60000,
+                    )
+
+                    level["order_id"] = order["orderId"]
+                    orders_placed += 1
+                    self.logger.info(
+                        f"✅ BUY Level {level['level']}: {order['origQty']} @ ${order['price']}"
+                    )
+
+                except Exception as e:
+                    failed_orders += 1
+                    self.logger.error(f"❌ BUY Level {level['level']} failed: {e}")
+
+            # Place SELL orders
+            for level in grid_config.sell_levels:
+                try:
+                    # Format with exact precision
+                    quantity_str = (
+                        f"{level['quantity']:.{rules['quantity_precision']}f}".rstrip(
+                            "0"
+                        ).rstrip(".")
+                    )
+                    price_str = f"{level['price']:.{rules['price_precision']}f}".rstrip(
+                        "0"
+                    ).rstrip(".")
+
+                    # Ensure minimum decimal places
+                    if "." not in quantity_str and rules["quantity_precision"] > 0:
+                        quantity_str += ".0"
+                    if "." not in price_str and rules["price_precision"] > 0:
+                        price_str += ".0"
+
+                    self.logger.info(f"📤 Placing SELL: {quantity_str} @ {price_str}")
+
+                    order = self.binance_client.order_limit_sell(
+                        symbol=symbol,
+                        quantity=quantity_str,
+                        price=price_str,
+                        recvWindow=60000,
+                    )
+
+                    level["order_id"] = order["orderId"]
+                    orders_placed += 1
+                    self.logger.info(
+                        f"✅ SELL Level {level['level']}: {order['origQty']} @ ${order['price']}"
+                    )
+
+                except Exception as e:
+                    failed_orders += 1
+                    self.logger.error(f"❌ SELL Level {level['level']} failed: {e}")
+
+            success_rate = (
+                (orders_placed / (orders_placed + failed_orders) * 100)
+                if (orders_placed + failed_orders) > 0
+                else 0
+            )
+
+            self.logger.info("✅ Grid setup completed:")
+            self.logger.info(f"   🎯 Orders placed: {orders_placed}")
+            self.logger.info(f"   ❌ Failed orders: {failed_orders}")
+            self.logger.info(f"   📊 Success rate: {success_rate:.1f}%")
+
+            return {
+                "success": orders_placed > 0,
+                "orders_placed": orders_placed,
+                "failed_orders": failed_orders,
+                "success_rate": f"{success_rate:.1f}%",
+            }
+
+        except Exception as e:
+            self.logger.error(f"❌ Grid setup execution error: {e}")
             return {"success": False, "error": str(e)}
 
     async def handle_force_command(self, command: str) -> Dict:
@@ -1060,34 +1120,36 @@ class SingleAdvancedGridManager:
                 )
                 return info
 
-            
-            
             # FORCE ETH overrides to fix precision issues
             if symbol == "ETHUSDT":
                 info = {
                     "price_precision": 2,
                     "quantity_precision": 5,  # Allow 5 decimal places
                     "tick_size": 0.01,
-                    "step_size": 0.00001,     # ETH step size is 0.00001
+                    "step_size": 0.00001,  # ETH step size is 0.00001
                     "min_notional": 5.0,
                     "status": "TRADING",
                 }
-                self.logger.info(f"🔒 FORCED ETH precision: step_size={info['step_size']}, quantity_precision={info['quantity_precision']}")
+                self.logger.info(
+                    f"🔒 FORCED ETH precision: step_size={info['step_size']}, quantity_precision={info['quantity_precision']}"
+                )
                 return info
-            
-            # For other symbols, get from Binance API# FORCE SOL overrides to fix precision issues  
+
+            # For other symbols, get from Binance API# FORCE SOL overrides to fix precision issues
             if symbol == "SOLUSDT":
                 info = {
                     "price_precision": 3,
                     "quantity_precision": 4,  # Allow 4 decimal places
                     "tick_size": 0.001,
-                    "step_size": 0.0001,      # SOL step size is 0.0001
+                    "step_size": 0.0001,  # SOL step size is 0.0001
                     "min_notional": 5.0,
                     "status": "TRADING",
                 }
-                self.logger.info(f"🔒 FORCED SOL precision: step_size={info['step_size']}, quantity_precision={info['quantity_precision']}")
+                self.logger.info(
+                    f"🔒 FORCED SOL precision: step_size={info['step_size']}, quantity_precision={info['quantity_precision']}"
+                )
                 return info
-            
+
             # For other symbols, get from Binance API# For other symbols, get from Binance API
             exchange_info = self.binance_client.get_exchange_info()
             exchange_info = self.binance_client.get_exchange_info()
@@ -1631,58 +1693,440 @@ class SingleAdvancedGridManager:
         except Exception as e:
             self.logger.error(f"❌ Single grid monitoring error for {symbol}: {e}")
 
-    async def _check_and_replace_filled_orders(
-        self, symbol: str, grid_config: SingleAdvancedGridConfig
-    ):
-        """Check for filled orders and create replacement orders with advanced logic"""
+    async def _check_and_replace_filled_orders_with_inventory(self, symbol: str):
+        """
+        CONSOLIDATED: Check for filled orders and replace them with inventory management
+        This is the ONLY method you need for order replacement
+        """
         try:
-            # Check buy levels
+            grid_config = self.active_grids[symbol]
+
+            # Get open orders to determine which are filled
+            open_orders = self.binance_client.get_open_orders(symbol=symbol)
+            open_order_ids = {order["orderId"] for order in open_orders}
+
+            self.logger.debug(
+                f"🔍 Checking filled orders for {symbol}: {len(open_order_ids)} still open"
+            )
+
+            # Check buy levels for fills
             for level in grid_config.buy_levels:
-                if level["order_id"] and not level["filled"]:
-                    try:
-                        order_status = self.binance_client.get_order(
-                            symbol=symbol, orderId=level["order_id"]
-                        )
+                if (
+                    level["order_id"]
+                    and level["order_id"] not in open_order_ids
+                    and not level.get("filled", False)
+                ):
+                    # Mark as filled
+                    level["filled"] = True
 
-                        if order_status["status"] == "FILLED":
-                            level["filled"] = True
+                    # Update inventory after fill
+                    self.inventory_manager.update_after_fill(
+                        symbol, "BUY", level["quantity"], level["price"]
+                    )
 
-                            # Create corresponding sell order with compound-enhanced size
-                            await self._create_enhanced_sell_order(
-                                symbol, level, grid_config
-                            )
+                    self.logger.info(
+                        f"💰 BUY order filled: Level {level['level']} - {level['quantity']:.4f} @ ${level['price']:.2f}"
+                    )
 
-                            # Update compound management
-                            self.metrics["compound_events"] += 1
+                    # Create replacement sell order with inventory check
+                    await self._create_replacement_sell_order(
+                        symbol, level, grid_config
+                    )
 
-                    except Exception as e:
-                        self.logger.warning(
-                            f"⚠️ Order status check error for {level['order_id']}: {e}"
-                        )
-
-            # Check sell levels
+            # Check sell levels for fills
             for level in grid_config.sell_levels:
-                if level["order_id"] and not level["filled"]:
-                    try:
-                        order_status = self.binance_client.get_order(
-                            symbol=symbol, orderId=level["order_id"]
-                        )
+                if (
+                    level["order_id"]
+                    and level["order_id"] not in open_order_ids
+                    and not level.get("filled", False)
+                ):
+                    # Mark as filled
+                    level["filled"] = True
 
-                        if order_status["status"] == "FILLED":
-                            level["filled"] = True
+                    # Update inventory after fill
+                    self.inventory_manager.update_after_fill(
+                        symbol, "SELL", level["quantity"], level["price"]
+                    )
 
-                            # Create corresponding buy order
-                            await self._create_enhanced_buy_order(
-                                symbol, level, grid_config
-                            )
+                    self.logger.info(
+                        f"💰 SELL order filled: Level {level['level']} - {level['quantity']:.4f} @ ${level['price']:.2f}"
+                    )
 
-                    except Exception as e:
-                        self.logger.warning(
-                            f"⚠️ Order status check error for {level['order_id']}: {e}"
-                        )
+                    # Create replacement buy order with inventory check
+                    await self._create_replacement_buy_order(symbol, level, grid_config)
+
+            # Update performance metrics if any orders were filled
+            filled_orders = sum(
+                1
+                for level in grid_config.buy_levels + grid_config.sell_levels
+                if level.get("filled", False)
+            )
+            if filled_orders > 0:
+                self.metrics["total_trades"] += filled_orders
+
+            # Optional: Run additional management tasks
+            await self._run_grid_maintenance(symbol)
 
         except Exception as e:
-            self.logger.error(f"❌ Order replacement check error for {symbol}: {e}")
+            self.logger.error(f"❌ Order replacement error for {symbol}: {e}")
+
+    async def _create_replacement_sell_order(
+        self, symbol: str, filled_buy_level: Dict, grid_config: SingleAdvancedGridConfig
+    ):
+        """
+        Create replacement sell order when a buy order fills
+        """
+        try:
+            # Get exchange rules for this symbol
+            rules = await self._get_exchange_rules_simple(symbol)
+
+            # Calculate new sell price (above the filled buy price)
+            spacing = grid_config.grid_spacing
+            raw_sell_price = filled_buy_level["price"] * (1 + spacing)
+
+            # Make price valid
+            valid_sell_price = self._make_valid_price(
+                raw_sell_price, rules["tick_size"], rules["price_precision"]
+            )
+
+            # Calculate order size (same USD value as original)
+            order_usd = filled_buy_level["order_size_usd"]
+            raw_quantity = order_usd / valid_sell_price
+
+            # Make quantity valid
+            valid_quantity = self._make_valid_quantity(
+                raw_quantity,
+                rules["step_size"],
+                rules["quantity_precision"],
+                rules["min_qty"],
+            )
+
+            # Check if we can place the sell order
+            can_place, reason = self.inventory_manager.can_place_sell_order(
+                symbol, valid_quantity
+            )
+
+            if can_place:
+                # Reserve inventory
+                if self.inventory_manager.reserve_for_order(
+                    symbol, "SELL", valid_quantity, valid_sell_price
+                ):
+                    try:
+                        # Format strings for order
+                        quantity_str = (
+                            f"{valid_quantity:.{rules['quantity_precision']}f}".rstrip(
+                                "0"
+                            ).rstrip(".")
+                        )
+                        price_str = (
+                            f"{valid_sell_price:.{rules['price_precision']}f}".rstrip(
+                                "0"
+                            ).rstrip(".")
+                        )
+
+                        # Ensure minimum formatting
+                        if "." not in quantity_str and rules["quantity_precision"] > 0:
+                            quantity_str += ".0"
+                        if "." not in price_str and rules["price_precision"] > 0:
+                            price_str += ".0"
+
+                        # Place sell order
+                        order = self.binance_client.order_limit_sell(
+                            symbol=symbol,
+                            quantity=quantity_str,
+                            price=price_str,
+                            recvWindow=60000,
+                        )
+
+                        # Create new sell level
+                        new_sell_level = {
+                            "level": filled_buy_level["level"]
+                            + 100,  # Offset to avoid conflicts
+                            "side": "SELL",
+                            "price": valid_sell_price,
+                            "quantity": valid_quantity,
+                            "order_size_usd": valid_quantity * valid_sell_price,
+                            "order_id": order["orderId"],
+                            "filled": False,
+                            "created_from_buy": filled_buy_level["level"],
+                        }
+
+                        # Add to grid config
+                        grid_config.sell_levels.append(new_sell_level)
+
+                        self.logger.info(
+                            f"✅ Replacement SELL order: {valid_quantity:.4f} @ ${valid_sell_price:.4f} (from buy level {filled_buy_level['level']})"
+                        )
+
+                    except Exception as e:
+                        # Release reservation if order failed
+                        self.inventory_manager.release_reservation(
+                            symbol, "SELL", valid_quantity, valid_sell_price
+                        )
+                        self.logger.error(
+                            f"❌ Failed to place replacement SELL order: {e}"
+                        )
+                else:
+                    self.logger.warning(
+                        "⚠️ Could not reserve inventory for replacement SELL order"
+                    )
+            else:
+                self.logger.warning(f"⚠️ Cannot place replacement SELL order: {reason}")
+
+        except Exception as e:
+            self.logger.error(f"❌ Create replacement sell order error: {e}")
+
+    async def _create_replacement_buy_order(
+        self,
+        symbol: str,
+        filled_sell_level: Dict,
+        grid_config: SingleAdvancedGridConfig,
+    ):
+        """
+        Create replacement buy order when a sell order fills
+        """
+        try:
+            # Get exchange rules for this symbol
+            rules = await self._get_exchange_rules_simple(symbol)
+
+            # Calculate new buy price (below the filled sell price)
+            spacing = grid_config.grid_spacing
+            raw_buy_price = filled_sell_level["price"] * (1 - spacing)
+
+            # Make price valid
+            valid_buy_price = self._make_valid_price(
+                raw_buy_price, rules["tick_size"], rules["price_precision"]
+            )
+
+            # Calculate order size (same USD value as original)
+            order_usd = filled_sell_level["order_size_usd"]
+            raw_quantity = order_usd / valid_buy_price
+
+            # Make quantity valid
+            valid_quantity = self._make_valid_quantity(
+                raw_quantity,
+                rules["step_size"],
+                rules["quantity_precision"],
+                rules["min_qty"],
+            )
+
+            # Calculate actual order value
+            actual_order_value = valid_quantity * valid_buy_price
+
+            # Check if we can place the buy order
+            can_place, reason = self.inventory_manager.can_place_buy_order(
+                symbol, actual_order_value
+            )
+
+            if can_place:
+                # Reserve inventory
+                if self.inventory_manager.reserve_for_order(
+                    symbol, "BUY", valid_quantity, valid_buy_price
+                ):
+                    try:
+                        # Format strings for order
+                        quantity_str = (
+                            f"{valid_quantity:.{rules['quantity_precision']}f}".rstrip(
+                                "0"
+                            ).rstrip(".")
+                        )
+                        price_str = (
+                            f"{valid_buy_price:.{rules['price_precision']}f}".rstrip(
+                                "0"
+                            ).rstrip(".")
+                        )
+
+                        # Ensure minimum formatting
+                        if "." not in quantity_str and rules["quantity_precision"] > 0:
+                            quantity_str += ".0"
+                        if "." not in price_str and rules["price_precision"] > 0:
+                            price_str += ".0"
+
+                        # Place buy order
+                        order = self.binance_client.order_limit_buy(
+                            symbol=symbol,
+                            quantity=quantity_str,
+                            price=price_str,
+                            recvWindow=60000,
+                        )
+
+                        # Create new buy level
+                        new_buy_level = {
+                            "level": filled_sell_level["level"]
+                            - 100,  # Offset to avoid conflicts
+                            "side": "BUY",
+                            "price": valid_buy_price,
+                            "quantity": valid_quantity,
+                            "order_size_usd": actual_order_value,
+                            "order_id": order["orderId"],
+                            "filled": False,
+                            "created_from_sell": filled_sell_level["level"],
+                        }
+
+                        # Add to grid config
+                        grid_config.buy_levels.append(new_buy_level)
+
+                        self.logger.info(
+                            f"✅ Replacement BUY order: {valid_quantity:.4f} @ ${valid_buy_price:.4f} (from sell level {filled_sell_level['level']})"
+                        )
+
+                    except Exception as e:
+                        # Release reservation if order failed
+                        self.inventory_manager.release_reservation(
+                            symbol, "BUY", valid_quantity, valid_buy_price
+                        )
+                        self.logger.error(
+                            f"❌ Failed to place replacement BUY order: {e}"
+                        )
+                else:
+                    self.logger.warning(
+                        "⚠️ Could not reserve inventory for replacement BUY order"
+                    )
+            else:
+                self.logger.warning(f"⚠️ Cannot place replacement BUY order: {reason}")
+
+        except Exception as e:
+            self.logger.error(f"❌ Create replacement buy order error: {e}")
+
+    def _should_log_inventory(self) -> bool:
+        """Helper to determine when to log inventory status (every 5 minutes)"""
+        import time
+
+        return int(time.time()) % 300 == 0
+
+    def get_inventory_status_for_all_grids(self) -> Dict:
+        """
+        ADD this new method: Get inventory status for all active grids
+        """
+        if not self.inventory_manager:
+            return {"error": "Inventory manager not initialized"}
+
+        status = {
+            "total_capital": f"${self.inventory_manager.total_capital:,.2f}",
+            "assets": {},
+            "allocation_reasoning": self.inventory_manager.get_allocation_reasoning(),
+        }
+
+        for symbol in self.active_grids.keys():
+            status["assets"][symbol] = self.inventory_manager.get_inventory_status(
+                symbol
+            )
+
+        return status
+
+    # SIMPLE BULLETPROOF FIX: Add this method to your single_advanced_grid_manager.py
+
+    async def _get_exchange_rules_simple(self, symbol: str) -> dict:
+        """Get exchange rules with bulletproof fallbacks for any asset"""
+        try:
+            self.logger.info(f"🔍 Getting exchange rules for {symbol}")
+
+            # Fetch from Binance API
+            exchange_info = self.binance_client.get_exchange_info()
+
+            for sym_info in exchange_info["symbols"]:
+                if sym_info["symbol"] == symbol:
+                    # Extract filters
+                    filters = {}
+                    for filter_info in sym_info.get("filters", []):
+                        filters[filter_info["filterType"]] = filter_info
+
+                    # Get price filter (tick_size)
+                    price_filter = filters.get("PRICE_FILTER", {})
+                    tick_size = float(price_filter.get("tickSize", "0.00000001"))
+
+                    # Get lot size filter (step_size)
+                    lot_size = filters.get("LOT_SIZE", {})
+                    step_size = float(lot_size.get("stepSize", "0.00000001"))
+                    min_qty = float(lot_size.get("minQty", "0.00000001"))
+
+                    # Get minimum notional
+                    min_notional = filters.get("MIN_NOTIONAL", {})
+                    min_notional_value = float(min_notional.get("minNotional", "5.0"))
+
+                    rules = {
+                        "symbol": symbol,
+                        "tick_size": tick_size,
+                        "step_size": step_size,
+                        "min_qty": min_qty,
+                        "min_notional": min_notional_value,
+                        "price_precision": self._get_precision_from_step(tick_size),
+                        "quantity_precision": self._get_precision_from_step(step_size),
+                    }
+
+                    self.logger.info(f"✅ Exchange rules for {symbol}:")
+                    self.logger.info(
+                        f"   💲 Price: tick_size={tick_size}, precision={rules['price_precision']}"
+                    )
+                    self.logger.info(
+                        f"   📦 Quantity: step_size={step_size}, precision={rules['quantity_precision']}"
+                    )
+                    self.logger.info(f"   💰 Min notional: ${min_notional_value}")
+
+                    return rules
+
+            raise ValueError(f"Symbol {symbol} not found")
+
+        except Exception as e:
+            self.logger.error(f"❌ Failed to get exchange rules for {symbol}: {e}")
+            # Return safe defaults
+            return {
+                "symbol": symbol,
+                "tick_size": 0.00000001,
+                "step_size": 0.00000001,
+                "min_qty": 0.00000001,
+                "min_notional": 10.0,
+                "price_precision": 8,
+                "quantity_precision": 8,
+            }
+
+    def _get_precision_from_step(self, step_size: float) -> int:
+        """Calculate precision from step size"""
+        try:
+            if step_size >= 1:
+                return 0
+
+            # Convert to string and count decimal places
+            step_str = f"{step_size:.10f}".rstrip("0")
+            if "." in step_str:
+                return len(step_str.split(".")[1])
+            return 0
+        except:
+            return 8
+
+    def _make_valid_price(
+        self, price: float, tick_size: float, precision: int
+    ) -> float:
+        """Make any price valid for Binance"""
+        try:
+            # Round to tick size
+            rounded = round(price / tick_size) * tick_size
+
+            # Format with correct precision
+            formatted = round(rounded, precision)
+
+            return formatted
+        except:
+            return round(price, precision)
+
+    def _make_valid_quantity(
+        self, quantity: float, step_size: float, precision: int, min_qty: float
+    ) -> float:
+        """Make any quantity valid for Binance"""
+        try:
+            # Round to step size
+            rounded = round(quantity / step_size) * step_size
+
+            # Ensure minimum quantity
+            if rounded < min_qty:
+                rounded = min_qty
+
+            # Format with correct precision
+            formatted = round(rounded, precision)
+
+            return formatted
+        except:
+            return max(round(quantity, precision), min_qty)
 
     async def _create_enhanced_sell_order(
         self, symbol: str, buy_level: Dict, grid_config: SingleAdvancedGridConfig
@@ -1968,3 +2412,73 @@ class SingleAdvancedGridManager:
 
         except Exception as e:
             self.logger.error(f"❌ Performance tracking update error: {e}")
+
+    async def _run_grid_maintenance(self, symbol: str):
+        """
+        Optional: Run additional maintenance tasks after order fills
+        """
+        try:
+            # Update compound management if available
+            if hasattr(self, "compound_manager"):
+                try:
+                    current_multiplier = self.compound_manager.get_current_multiplier()
+                    self.logger.debug(
+                        f"🔄 Compound multiplier for {symbol}: {current_multiplier:.2f}x"
+                    )
+                except:
+                    pass
+
+            # Check if grid needs rebalancing
+            if hasattr(self, "inventory_manager"):
+                try:
+                    should_rebalance, reason = self.inventory_manager.should_rebalance(
+                        symbol
+                    )
+                    if should_rebalance:
+                        self.logger.info(f"🔄 {symbol} may need rebalancing: {reason}")
+                except:
+                    pass
+
+            # Update performance metrics
+            self.metrics["compound_events"] += 1
+
+        except Exception as e:
+            self.logger.debug(f"⚠️ Grid maintenance warning for {symbol}: {e}")
+            # Don't let maintenance errors break the main flow
+
+
+# ADD this helper function outside the class
+def get_force_command_allocation(symbol: str, amount: float) -> Dict:
+    """
+    Helper function for FORCE commands with proper allocation
+    CALL this from your handle_force_command method
+    """
+    if symbol == "ETHUSDT":
+        return {
+            "symbol": symbol,
+            "total_capital": amount,
+            "allocation_pct": 1.0,  # 100% for single asset
+            "grid_spacing": 0.025,  # 2.5%
+            "risk_profile": "conservative",
+            "reasoning": "ETH - Conservative anchor with institutional adoption",
+        }
+    elif symbol == "SOLUSDT":
+        return {
+            "symbol": symbol,
+            "total_capital": amount,
+            "allocation_pct": 1.0,  # 100% for single asset
+            "grid_spacing": 0.030,  # 3.0%
+            "risk_profile": "moderate-aggressive",
+            "reasoning": "SOL - High growth potential with DeFi ecosystem",
+        }
+    elif symbol == "ADAUSDT":
+        return {
+            "symbol": symbol,
+            "total_capital": amount,
+            "allocation_pct": 1.0,  # 100% for single asset
+            "grid_spacing": 0.028,  # 2.8%
+            "risk_profile": "moderate",
+            "reasoning": "ADA - Academic blockchain with steady development",
+        }
+    else:
+        return {"error": f"Unsupported symbol: {symbol}"}

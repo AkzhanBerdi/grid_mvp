@@ -1,7 +1,6 @@
 # config.py
 """Configuration management for Right Bastard Client Service"""
 
-import logging
 import os
 from typing import Dict
 
@@ -207,132 +206,265 @@ class AutoResetInterface:
         raise NotImplementedError("Will be implemented by SmartGridAutoReset")
 
 
-class ThreeAssetPortfolioManager:
-    """Manages ETH (40%), SOL (30%), ADA (30%) portfolio strategy"""
+class SingleGridPortfolioManager:
+    """
+    Updated Portfolio Manager for Single Advanced Grid Architecture
+    Handles ETH (40%), SOL (35%), ADA (25%) allocation with inventory management
+    """
 
-    def __init__(self, total_capital: float):
+    def __init__(self, total_capital: float = 2400.0):
         self.total_capital = total_capital
         self.logger = logging.getLogger(__name__)
 
-        # Portfolio allocation - Total 30 grids (10 per asset)
+        # Updated allocation strategy with inventory management
         self.portfolio_allocation = {
             "ETHUSDT": {
-                "allocation": 0.40,  # 40% of capital
-                "capital": total_capital * 0.40,
-                "max_grids": 10,  # 10 grids for ETH
-                "risk_level": "moderate",
-                "rationale": "Blue chip crypto, stable growth",
+                "allocation_pct": 0.40,  # 40% = $960 for $2400
+                "total_capital": total_capital * 0.40,
+                "usdt_reserve": total_capital * 0.20,  # 50% of allocation in USDT
+                "asset_reserve": total_capital * 0.20,  # 50% of allocation in ETH
+                "grid_levels": 10,  # 5 buy + 5 sell
+                "grid_spacing": 0.025,  # 2.5% - ETH less volatile
+                "order_size_base": total_capital * 0.04,  # $96 per order for $2400
+                "risk_level": "conservative",
+                "volatility_threshold": 1.20,
+                "rationale": "Blue chip crypto - ETF inflows, institutional adoption, lowest volatility",
                 "expected_annual_return": "60-100%",
-                "order_size_multiplier": 1.0,
             },
             "SOLUSDT": {
-                "allocation": 0.30,  # 30% of capital
-                "capital": total_capital * 0.30,
-                "max_grids": 10,  # 10 grids for SOL
-                "risk_level": "moderate-high",
-                "rationale": "High-performance blockchain, growth potential",
+                "allocation_pct": 0.35,  # 35% = $840 for $2400
+                "total_capital": total_capital * 0.35,
+                "usdt_reserve": total_capital * 0.175,  # 50% of allocation in USDT
+                "asset_reserve": total_capital * 0.175,  # 50% of allocation in SOL
+                "grid_levels": 10,  # 5 buy + 5 sell
+                "grid_spacing": 0.030,  # 3.0% - SOL more volatile
+                "order_size_base": total_capital * 0.035,  # $84 per order for $2400
+                "risk_level": "moderate-aggressive",
+                "volatility_threshold": 1.40,
+                "rationale": "Growth driver - High-performance blockchain, DeFi ecosystem, memecoin platform",
                 "expected_annual_return": "80-120%",
-                "order_size_multiplier": 1.1,  # Slightly larger orders
             },
             "ADAUSDT": {
-                "allocation": 0.30,  # 30% of capital
-                "capital": total_capital * 0.30,
-                "max_grids": 10,  # 10 grids for ADA
+                "allocation_pct": 0.25,  # 25% = $600 for $2400
+                "total_capital": total_capital * 0.25,
+                "usdt_reserve": total_capital * 0.125,  # 50% of allocation in USDT
+                "asset_reserve": total_capital * 0.125,  # 50% of allocation in ADA
+                "grid_levels": 10,  # 5 buy + 5 sell
+                "grid_spacing": 0.028,  # 2.8% - ADA moderate volatility
+                "order_size_base": total_capital * 0.025,  # $60 per order for $2400
                 "risk_level": "moderate",
-                "rationale": "Academic blockchain, steady development",
+                "volatility_threshold": 1.30,
+                "rationale": "Stability + upside - Academic blockchain, PoS pioneer, sustainable development",
                 "expected_annual_return": "70-110%",
-                "order_size_multiplier": 0.9,  # Slightly smaller orders
             },
         }
 
-        # Validate total allocation is 100%
+        # Validate allocation adds to 100%
         total_allocation = sum(
-            asset["allocation"] for asset in self.portfolio_allocation.values()
+            asset["allocation_pct"] for asset in self.portfolio_allocation.values()
         )
         assert abs(total_allocation - 1.0) < 0.001, (
             f"Total allocation must be 100%, got {total_allocation:.1%}"
         )
 
-        self.logger.info(f"💼 Portfolio initialized: ${total_capital:,.2f}")
+        self.logger.info(f"💼 Single Grid Portfolio initialized: ${total_capital:,.2f}")
         self.logger.info(
-            f"   🔷 ETH: ${self.portfolio_allocation['ETHUSDT']['capital']:,.2f} (40%)"
+            f"   🔷 ETH: ${self.portfolio_allocation['ETHUSDT']['total_capital']:,.2f} (40%) - Conservative anchor"
         )
         self.logger.info(
-            f"   🟣 SOL: ${self.portfolio_allocation['SOLUSDT']['capital']:,.2f} (30%)"
+            f"   🟣 SOL: ${self.portfolio_allocation['SOLUSDT']['total_capital']:,.2f} (35%) - Growth driver"
         )
         self.logger.info(
-            f"   🔵 ADA: ${self.portfolio_allocation['ADAUSDT']['capital']:,.2f} (30%)"
+            f"   🔵 ADA: ${self.portfolio_allocation['ADAUSDT']['total_capital']:,.2f} (25%) - Stability + upside"
         )
 
     def get_asset_configuration(self, symbol: str) -> Dict:
-        """Get optimized configuration for specific asset"""
+        """
+        Get configuration for specific asset compatible with SingleAdvancedGridManager
+        """
         asset_config = self.portfolio_allocation.get(symbol)
 
         if not asset_config:
             raise ValueError(f"Unsupported symbol: {symbol}. Supported: ETH, SOL, ADA")
 
-        # Calculate order size per grid (capital / number of grids)
-        base_order_size = asset_config["capital"] / asset_config["max_grids"]
-        adjusted_order_size = base_order_size * asset_config["order_size_multiplier"]
-
         # Ensure minimum order size for NOTIONAL compliance
-        min_order_size = 25.0  # $25 minimum to avoid NOTIONAL errors
-        final_order_size = max(adjusted_order_size, min_order_size)
-
-        # Grid configuration based on asset characteristics
-        grid_configs = {
-            "ETHUSDT": {
-                "grid_levels": 5,  # 5 buy + 5 sell = 10 total
-                "grid_spacing": 0.035,  # 3.5% spacing (ETH less volatile)
-                "volatility_threshold": 1.20,  # 120% volatility threshold
-            },
-            "SOLUSDT": {
-                "grid_levels": 5,  # 5 buy + 5 sell = 10 total
-                "grid_spacing": 0.045,  # 4.5% spacing (SOL more volatile)
-                "volatility_threshold": 1.40,  # 140% volatility threshold
-            },
-            "ADAUSDT": {
-                "grid_levels": 5,  # 5 buy + 5 sell = 10 total
-                "grid_spacing": 0.040,  # 4.0% spacing (ADA moderate volatility)
-                "volatility_threshold": 1.30,  # 130% volatility threshold
-            },
-        }
-
-        grid_config = grid_configs[symbol]
+        min_order_size = 25.0  # $25 minimum
+        final_order_size = max(asset_config["order_size_base"], min_order_size)
 
         return {
             "symbol": symbol,
-            "capital": asset_config["capital"],
-            "allocation_percentage": asset_config["allocation"] * 100,
+            "total_capital": asset_config["total_capital"],
+            "allocation_percentage": asset_config["allocation_pct"] * 100,
+            "usdt_reserve": asset_config["usdt_reserve"],
+            "asset_reserve": asset_config["asset_reserve"],
             "order_size": final_order_size,
-            "grid_levels": grid_config["grid_levels"],
-            "grid_spacing": grid_config["grid_spacing"],
-            "max_grids": asset_config["max_grids"],
-            "volatility_threshold": grid_config["volatility_threshold"],
+            "grid_levels": asset_config["grid_levels"],
+            "grid_spacing": asset_config["grid_spacing"],
+            "volatility_threshold": asset_config["volatility_threshold"],
             "risk_level": asset_config["risk_level"],
             "expected_return": asset_config["expected_annual_return"],
             "rationale": asset_config["rationale"],
+            # Additional config for SingleAdvancedGridManager compatibility
+            "grid_spacing_base": asset_config["grid_spacing"],
+            "compound_aggressiveness": self._get_compound_aggressiveness(
+                asset_config["risk_level"]
+            ),
+            "max_order_size_multiplier": self._get_order_size_multiplier(
+                asset_config["risk_level"]
+            ),
         }
 
+    def _get_compound_aggressiveness(self, risk_level: str) -> float:
+        """Get compound aggressiveness based on risk level"""
+        mapping = {
+            "conservative": 0.6,
+            "moderate": 0.7,
+            "moderate-aggressive": 0.8,
+            "aggressive": 0.9,
+        }
+        return mapping.get(risk_level, 0.7)
+
+    def _get_order_size_multiplier(self, risk_level: str) -> float:
+        """Get order size multiplier based on risk level"""
+        mapping = {
+            "conservative": 2.5,
+            "moderate": 2.8,
+            "moderate-aggressive": 3.0,
+            "aggressive": 3.5,
+        }
+        return mapping.get(risk_level, 2.8)
+
     def get_portfolio_summary(self) -> Dict:
-        """Get complete portfolio summary"""
+        """Get comprehensive portfolio summary"""
         summary = {
             "total_capital": self.total_capital,
-            "total_grids": 30,  # 10 per asset
+            "architecture": "Single Advanced Grid with Inventory Management",
+            "total_grids": 3,  # One grid per asset
+            "total_levels": 30,  # 10 levels per grid
             "assets": {},
-            "risk_profile": "Balanced growth with blue-chip focus",
-            "expected_annual_return": "70-110%",
-            "max_drawdown_estimate": "25-35%",
+            "risk_profile": "Balanced growth with risk-adjusted allocation",
+            "expected_annual_return": "60-120% (weighted average: ~80%)",
+            "max_drawdown_estimate": "20-30%",
+            "allocation_strategy": "40% ETH (anchor) + 35% SOL (growth) + 25% ADA (stability)",
         }
 
         for symbol in ["ETHUSDT", "SOLUSDT", "ADAUSDT"]:
             config = self.get_asset_configuration(symbol)
             summary["assets"][symbol] = {
                 "allocation": f"{config['allocation_percentage']:.0f}%",
-                "capital": f"${config['capital']:,.2f}",
-                "grids": config["max_grids"],
+                "capital": f"${config['total_capital']:,.2f}",
+                "usdt_reserve": f"${config['usdt_reserve']:,.2f}",
+                "asset_reserve": f"${config['asset_reserve']:,.2f}",
+                "grid_levels": config["grid_levels"],
                 "order_size": f"${config['order_size']:.2f}",
+                "grid_spacing": f"{config['grid_spacing'] * 100:.1f}%",
                 "expected_return": config["expected_return"],
+                "rationale": config["rationale"],
             }
 
         return summary
+
+    def get_allocation_reasoning(self) -> Dict:
+        """
+        Get detailed reasoning behind the asset allocation strategy
+        """
+        return {
+            "strategy_name": "Balanced Growth with Risk-Adjusted Allocation",
+            "total_capital": f"${self.total_capital:,.2f}",
+            "allocation_philosophy": [
+                "Conservative anchor (ETH) for stability and institutional confidence",
+                "Growth driver (SOL) for high returns and ecosystem expansion",
+                "Stability + upside (ADA) for academic rigor and long-term value",
+            ],
+            "risk_management": [
+                "Diversification across different blockchain paradigms",
+                "Volatility-adjusted grid spacing (2.5% ETH, 3.0% SOL, 2.8% ADA)",
+                "Conservative position sizing with inventory management",
+                "50/50 USDT/Asset split enables consistent order replacement",
+            ],
+            "asset_details": {
+                "ETHUSDT": {
+                    "allocation": "40% ($960)",
+                    "reasoning": [
+                        "Largest allocation due to lowest risk profile",
+                        "Strong institutional adoption and ETF inflows",
+                        "Network effects and established ecosystem",
+                        "Most liquid crypto asset",
+                        "Conservative 2.5% grid spacing",
+                    ],
+                    "market_position": "Conservative anchor - stability with upside",
+                },
+                "SOLUSDT": {
+                    "allocation": "35% ($840)",
+                    "reasoning": [
+                        "High growth potential with expanding ecosystem",
+                        "Leading DeFi and memecoin platform",
+                        "Strong developer activity and innovation",
+                        "Higher volatility = more grid trading opportunities",
+                        "3.0% grid spacing captures SOL's price movements",
+                    ],
+                    "market_position": "Growth driver - highest return potential",
+                },
+                "ADAUSDT": {
+                    "allocation": "25% ($600)",
+                    "reasoning": [
+                        "Academic research-driven development",
+                        "Proof-of-Stake pioneer with governance focus",
+                        "Sustainable and methodical approach",
+                        "Lower correlation with ETH/SOL during market stress",
+                        "2.8% grid spacing balances stability and opportunity",
+                    ],
+                    "market_position": "Stability + upside - long-term value creation",
+                },
+            },
+            "expected_outcomes": {
+                "low_volatility_market": "ETH grid captures steady gains, portfolio stability maintained",
+                "high_volatility_market": "SOL grid maximizes opportunities, ADA provides balance",
+                "bear_market": "Conservative allocation and spacing limit downside exposure",
+                "bull_market": "SOL allocation captures maximum upside, ETH provides steady gains",
+            },
+        }
+
+
+# UPDATE: Replace this section in your existing asset configs
+# In your SingleAdvancedGridManager.__init__, UPDATE the asset_configs to use this:
+
+
+def get_updated_asset_configs(total_capital: float = 2400.0) -> Dict:
+    """
+    REPLACE your existing asset_configs in SingleAdvancedGridManager with this
+    """
+    portfolio_manager = SingleGridPortfolioManager(total_capital)
+
+    return {
+        "ETHUSDT": {
+            "allocation": portfolio_manager.portfolio_allocation["ETHUSDT"][
+                "total_capital"
+            ],
+            "risk_profile": "conservative",
+            "grid_spacing_base": 0.025,  # 2.5%
+            "volatility_threshold": 0.8,
+            "compound_aggressiveness": 0.6,
+            "max_order_size_multiplier": 2.5,
+        },
+        "SOLUSDT": {
+            "allocation": portfolio_manager.portfolio_allocation["SOLUSDT"][
+                "total_capital"
+            ],
+            "risk_profile": "moderate-aggressive",
+            "grid_spacing_base": 0.03,  # 3.0%
+            "volatility_threshold": 1.2,
+            "compound_aggressiveness": 0.8,
+            "max_order_size_multiplier": 3.0,
+        },
+        "ADAUSDT": {
+            "allocation": portfolio_manager.portfolio_allocation["ADAUSDT"][
+                "total_capital"
+            ],
+            "risk_profile": "moderate",
+            "grid_spacing_base": 0.025,  # 2.5%
+            "volatility_threshold": 1.0,
+            "compound_aggressiveness": 0.7,
+            "max_order_size_multiplier": 2.8,
+        },
+    }

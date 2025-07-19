@@ -627,571 +627,347 @@ class SmartGridAutoReset:
         }
 
 
-import decimal
-from decimal import ROUND_HALF_UP, Decimal
+# REPLACE the PrecisionOrderHandler class in your single_advanced_grid_manager.py with this UNIVERSAL version
 
 
 class PrecisionOrderHandler:
-    def __init__(self, binance_client: Client):
+    def __init__(self, binance_client):
         self.binance_client = binance_client
         self.logger = logging.getLogger(__name__)
 
         # Cache for exchange info
         self.exchange_info_cache = {}
-        self.cache_ttl = 3600
+        self.cache_timestamp = 0
+        self.cache_duration = 3600  # 1 hour
 
-        # FORCE symbol overrides (don't trust exchange info for these)
-        self.symbol_overrides = {
-            "ETHUSDT": {
-                "quantity_precision": 5,
-                "min_quantity": 0.001,
-                "step_size": 0.00001,
-                "min_notional": 5.0,
-                "price_precision": 2,
-                "tick_size": 0.01,
-                "max_quantity": 1000000,
-                "min_price": 0.01,
-                "max_price": 1000000,
-                "force_override": True,  # Always use these rules
-            },
-            "SOLUSDT": {
-                "quantity_precision": 4,
-                "min_quantity": 0.01,
-                "step_size": 0.0001,
-                "min_notional": 5.0,
-                "price_precision": 3,
-                "tick_size": 0.001,
-                "max_quantity": 1000000,
-                "min_price": 0.001,
-                "max_price": 1000000,
-                "force_override": True,
-            },
-            "ADAUSDT": {
-                "quantity_precision": 1,
-                "min_quantity": 0.1,
-                "step_size": 0.1,
-                "min_notional": 5.0,
-                "price_precision": 4,
-                "tick_size": 0.0001,
-                "max_quantity": 1000000,
-                "min_price": 0.0001,
-                "max_price": 1000000,
-                "force_override": True,
-            },
-        }
-
-        self.logger.info(
-            "🎯 Enhanced PrecisionOrderHandler initialized with FORCE overrides"
-        )
-
-        # Log each symbol's rules
-        for symbol, rules in self.symbol_overrides.items():
-            self.logger.info(
-                f"🔒 FORCED {symbol}: step={rules['step_size']}, min_qty={rules['min_quantity']}, precision={rules['quantity_precision']}"
-            )
-
-    async def get_symbol_precision_rules(self, symbol: str) -> Dict:
-        """Get precision rules - FORCE overrides first, exchange info as fallback"""
+    async def get_real_exchange_info(self, symbol: str) -> dict:
+        """Get REAL exchange info from Binance API - no hardcoded overrides"""
         try:
-            # CRITICAL: If we have overrides, ALWAYS use them first
-            if symbol in self.symbol_overrides and self.symbol_overrides[symbol].get(
-                "force_override"
-            ):
-                rules = self.symbol_overrides[symbol].copy()
-                rules.update(
-                    {
-                        "symbol": symbol,
-                        "status": "TRADING",
-                        "base_asset": symbol.replace("USDT", ""),
-                        "quote_asset": "USDT",
-                        "source": "forced_override",
-                        "percent_price_up": 5.0,
-                        "percent_price_down": 0.2,
-                    }
-                )
+            import time
 
-                self.logger.info(f"🔒 USING FORCED OVERRIDE for {symbol}")
-                return rules
-
-            # Fallback to exchange info only if no forced override
-            cache_key = f"{symbol}_precision"
             current_time = time.time()
 
-            if cache_key in self.exchange_info_cache:
-                cached_data = self.exchange_info_cache[cache_key]
-                if current_time - cached_data["timestamp"] < self.cache_ttl:
-                    return cached_data["rules"]
+            # Check cache
+            if (
+                symbol in self.exchange_info_cache
+                and current_time - self.cache_timestamp < self.cache_duration
+            ):
+                return self.exchange_info_cache[symbol]
 
-            # Try exchange info
-            try:
-                exchange_info = self.binance_client.get_exchange_info()
-                symbol_info = next(
-                    (s for s in exchange_info["symbols"] if s["symbol"] == symbol), None
-                )
+            # Fetch fresh data from Binance
+            self.logger.info(f"🔍 Fetching REAL exchange info for {symbol}")
+            exchange_info = self.binance_client.get_exchange_info()
 
-                if symbol_info:
-                    filters = {f["filterType"]: f for f in symbol_info["filters"]}
+            for sym_info in exchange_info["symbols"]:
+                if sym_info["symbol"] == symbol:
+                    # Extract filters
+                    filters = {}
+                    for filter_info in sym_info.get("filters", []):
+                        filters[filter_info["filterType"]] = filter_info
+
+                    # Build precision rules from REAL API data
+                    price_filter = filters.get("PRICE_FILTER", {})
+                    lot_size = filters.get("LOT_SIZE", {})
+                    min_notional = filters.get("MIN_NOTIONAL", {})
 
                     rules = {
                         "symbol": symbol,
-                        "status": symbol_info.get("status", "TRADING"),
-                        "base_asset": symbol_info.get("baseAsset"),
-                        "quote_asset": symbol_info.get("quoteAsset"),
-                        "price_precision": int(symbol_info.get("quotePrecision", 4)),
-                        "quantity_precision": int(
-                            symbol_info.get("baseAssetPrecision", 8)
+                        "status": sym_info.get("status", "TRADING"),
+                        "baseAsset": sym_info.get("baseAsset"),
+                        "quoteAsset": sym_info.get("quoteAsset"),
+                        "baseAssetPrecision": int(
+                            sym_info.get("baseAssetPrecision", 8)
                         ),
-                        "min_quantity": float(
-                            filters.get("LOT_SIZE", {}).get("minQty", 0.001)
+                        "quotePrecision": int(sym_info.get("quotePrecision", 8)),
+                        "quoteAssetPrecision": int(
+                            sym_info.get("quoteAssetPrecision", 8)
                         ),
-                        "max_quantity": float(
-                            filters.get("LOT_SIZE", {}).get("maxQty", 1000000)
+                        # PRICE_FILTER
+                        "minPrice": float(price_filter.get("minPrice", "0.00000001")),
+                        "maxPrice": float(price_filter.get("maxPrice", "1000000")),
+                        "tickSize": float(price_filter.get("tickSize", "0.00000001")),
+                        # LOT_SIZE
+                        "minQty": float(lot_size.get("minQty", "0.00000001")),
+                        "maxQty": float(lot_size.get("maxQty", "1000000")),
+                        "stepSize": float(lot_size.get("stepSize", "0.00000001")),
+                        # MIN_NOTIONAL
+                        "minNotional": float(min_notional.get("minNotional", "5.0")),
+                        # Calculate precision from step sizes
+                        "price_precision": self._calculate_precision(
+                            float(price_filter.get("tickSize", "0.01"))
                         ),
-                        "step_size": float(
-                            filters.get("LOT_SIZE", {}).get("stepSize", 0.001)
+                        "quantity_precision": self._calculate_precision(
+                            float(lot_size.get("stepSize", "0.00000001"))
                         ),
-                        "min_price": float(
-                            filters.get("PRICE_FILTER", {}).get("minPrice", 0.01)
-                        ),
-                        "max_price": float(
-                            filters.get("PRICE_FILTER", {}).get("maxPrice", 1000000)
-                        ),
-                        "tick_size": float(
-                            filters.get("PRICE_FILTER", {}).get("tickSize", 0.01)
-                        ),
-                        "min_notional": float(
-                            filters.get("MIN_NOTIONAL", {}).get("minNotional", 5.0)
-                        ),
-                        "source": "exchange_api",
                     }
 
-                    self.exchange_info_cache[cache_key] = {
-                        "rules": rules,
-                        "timestamp": current_time,
-                    }
-                    self.logger.info(f"📡 Using exchange API rules for {symbol}")
+                    # Cache the result
+                    self.exchange_info_cache[symbol] = rules
+                    self.cache_timestamp = current_time
+
+                    self.logger.info(f"✅ Real exchange info for {symbol}:")
+                    self.logger.info(
+                        f"   📏 Price: tick_size={rules['tickSize']}, precision={rules['price_precision']}"
+                    )
+                    self.logger.info(
+                        f"   📦 Quantity: step_size={rules['stepSize']}, precision={rules['quantity_precision']}"
+                    )
+                    self.logger.info(f"   💰 Min notional: ${rules['minNotional']}")
+
                     return rules
 
-            except Exception as e:
-                self.logger.warning(f"Exchange info failed for {symbol}: {e}")
-
-            # Final fallback
-            return self._get_emergency_fallback_rules(symbol)
+            raise ValueError(f"Symbol {symbol} not found in exchange info")
 
         except Exception as e:
-            self.logger.error(f"❌ Error getting rules for {symbol}: {e}")
-            return self._get_emergency_fallback_rules(symbol)
+            self.logger.error(f"❌ Failed to get exchange info for {symbol}: {e}")
+            raise
 
-    def _get_emergency_fallback_rules(self, symbol: str) -> Dict:
-        """Emergency fallback with safe defaults"""
-        base_asset = symbol.replace("USDT", "")
-
-        if base_asset == "ETH":
-            rules = {
-                "symbol": symbol,
-                "status": "TRADING",
-                "price_precision": 2,
-                "quantity_precision": 5,
-                "min_quantity": 0.001,
-                "max_quantity": 1000000,
-                "step_size": 0.00001,
-                "min_price": 0.01,
-                "max_price": 1000000,
-                "tick_size": 0.01,
-                "min_notional": 5.0,
-                "source": "emergency_eth",
-            }
-        else:
-            rules = {
-                "symbol": symbol,
-                "status": "TRADING",
-                "price_precision": 4,
-                "quantity_precision": 3,
-                "min_quantity": 0.001,
-                "max_quantity": 1000000,
-                "step_size": 0.001,
-                "min_price": 0.01,
-                "max_price": 1000000,
-                "tick_size": 0.01,
-                "min_notional": 5.0,
-                "source": "emergency_generic",
-            }
-
-        self.logger.error(f"🚨 EMERGENCY FALLBACK for {symbol}: {rules}")
-        return rules
-
-    async def format_precision_order(
-        self, symbol: str, side: str, quantity: float, price: float
-    ) -> Dict:
-        """Enhanced formatting with comprehensive debugging and decimal arithmetic"""
+    def _calculate_precision(self, step_size: float) -> int:
+        """Calculate decimal precision from step size"""
         try:
-            rules = await self.get_symbol_precision_rules(symbol)
+            if step_size >= 1:
+                return 0
 
-            # COMPREHENSIVE DEBUGGING for ETH
-            if symbol == "ETHUSDT":
-                self.logger.info("🔍 ETH DETAILED DEBUG:")
-                self.logger.info(f"   Input: {quantity} ETH @ ${price}")
-                self.logger.info(f"   Rules source: {rules.get('source', 'unknown')}")
-                self.logger.info(f"   Step size: {rules['step_size']}")
-                self.logger.info(f"   Min quantity: {rules['min_quantity']}")
-                self.logger.info(
-                    f"   Quantity precision: {rules['quantity_precision']}"
-                )
+            # Count decimal places
+            step_str = f"{step_size:.10f}".rstrip("0")
+            if "." in step_str:
+                return len(step_str.split(".")[1])
+            return 0
 
-            # Use HIGH PRECISION decimal arithmetic
-            decimal.getcontext().prec = 28
+        except:
+            return 8  # Safe fallback
 
-            quantity_decimal = Decimal(str(quantity))
-            price_decimal = Decimal(str(price))
-            step_size_decimal = Decimal(str(rules["step_size"]))
-            tick_size_decimal = Decimal(str(rules["tick_size"]))
+    def _round_to_step_size(self, value: float, step_size: float) -> float:
+        """Round value to nearest valid step size"""
+        try:
+            if step_size == 0:
+                return value
 
-            # Format price with decimal precision
-            price_steps = (price_decimal / tick_size_decimal).quantize(
+            # Use high precision decimal arithmetic
+            from decimal import ROUND_HALF_UP, Decimal
+
+            decimal_value = Decimal(str(value))
+            decimal_step = Decimal(str(step_size))
+
+            # Calculate steps and round
+            steps = (decimal_value / decimal_step).quantize(
                 Decimal("1"), rounding=ROUND_HALF_UP
             )
-            formatted_price_decimal = price_steps * tick_size_decimal
-            formatted_price_decimal = max(
-                Decimal(str(rules["min_price"])),
-                min(Decimal(str(rules["max_price"])), formatted_price_decimal),
-            )
-
-            # Format quantity with decimal precision
-            quantity_steps = (quantity_decimal / step_size_decimal).quantize(
-                Decimal("1"), rounding=ROUND_HALF_UP
-            )
-            formatted_quantity_decimal = quantity_steps * step_size_decimal
-            formatted_quantity_decimal = max(
-                Decimal(str(rules["min_quantity"])),
-                min(Decimal(str(rules["max_quantity"])), formatted_quantity_decimal),
-            )
-
-            # Convert back to float
-            formatted_price = float(formatted_price_decimal)
-            formatted_quantity = float(formatted_quantity_decimal)
-            notional_value = formatted_quantity * formatted_price
-
-            # ETH-specific debugging
-            if symbol == "ETHUSDT":
-                self.logger.info("🧮 ETH CALCULATION:")
-                self.logger.info(f"   Quantity steps: {quantity_steps}")
-                self.logger.info(f"   Formatted quantity: {formatted_quantity}")
-                self.logger.info(f"   Notional: ${notional_value:.2f}")
-
-            # Handle minimum notional
-            if notional_value < rules["min_notional"]:
-                self.logger.warning(
-                    f"⚠️ {symbol} notional too low: ${notional_value:.2f} < ${rules['min_notional']}"
-                )
-
-                required_quantity_decimal = (
-                    Decimal(str(rules["min_notional"])) * Decimal("1.05")
-                ) / formatted_price_decimal
-                quantity_steps = (
-                    required_quantity_decimal / step_size_decimal
-                ).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-                formatted_quantity_decimal = quantity_steps * step_size_decimal
-                formatted_quantity_decimal = max(
-                    Decimal(str(rules["min_quantity"])), formatted_quantity_decimal
-                )
-
-                formatted_quantity = float(formatted_quantity_decimal)
-                notional_value = formatted_quantity * formatted_price
-
-                self.logger.info(
-                    f"✅ {symbol} adjusted: {quantity} → {formatted_quantity} for notional ${notional_value:.2f}"
-                )
-
-            # ENHANCED VALIDATION with VERY PERMISSIVE tolerance
-            validation_errors = []
-
-            # Basic range checks
-            if formatted_quantity < rules["min_quantity"]:
-                validation_errors.append(
-                    f"Quantity {formatted_quantity} below minimum {rules['min_quantity']}"
-                )
-
-            if formatted_quantity > rules["max_quantity"]:
-                validation_errors.append(
-                    f"Quantity {formatted_quantity} above maximum {rules['max_quantity']}"
-                )
-
-            if notional_value < rules["min_notional"]:
-                validation_errors.append(
-                    f"Notional ${notional_value:.2f} below minimum ${rules['min_notional']}"
-                )
-
-            # SUPER PERMISSIVE step_size validation
-            step_size = rules["step_size"]
-
-            # Use decimal arithmetic for remainder calculation
-            remainder_decimal = formatted_quantity_decimal % step_size_decimal
-            remainder = float(remainder_decimal)
-
-            # VERY generous tolerance - 50% of step_size
-            tolerance = step_size * 0.5
-
-            # Check alignment with generous tolerance
-            is_aligned = (remainder < tolerance) or (
-                abs(remainder - step_size) < tolerance
-            )
-
-            if not is_aligned:
-                validation_errors.append(
-                    f"Quantity {formatted_quantity} not aligned to step_size {step_size} (remainder: {remainder:.10f}, tolerance: {tolerance:.10f})"
-                )
-
-            # Format strings for API
-            price_str = f"{formatted_price:.{rules['price_precision']}f}".rstrip(
-                "0"
-            ).rstrip(".")
-            quantity_str = (
-                f"{formatted_quantity:.{rules['quantity_precision']}f}".rstrip(
-                    "0"
-                ).rstrip(".")
-            )
-
-            # DETAILED ETH RESULT LOGGING
-            if symbol == "ETHUSDT":
-                self.logger.info("📊 ETH VALIDATION RESULT:")
-                self.logger.info(f"   Quantity string: '{quantity_str}'")
-                self.logger.info(f"   Price string: '{price_str}'")
-                self.logger.info(f"   Remainder: {remainder:.12f}")
-                self.logger.info(f"   Tolerance: {tolerance:.12f}")
-                self.logger.info(f"   Aligned: {is_aligned}")
-                self.logger.info(f"   Validation errors: {validation_errors}")
-
-            result = {
-                "success": len(validation_errors) == 0,
-                "symbol": symbol,
-                "side": side,
-                "original_quantity": quantity,
-                "original_price": price,
-                "formatted_quantity": formatted_quantity,
-                "formatted_price": formatted_price,
-                "quantity_str": quantity_str,
-                "price_str": price_str,
-                "notional_value": notional_value,
-                "validation_errors": validation_errors,
-                "debug_info": {
-                    "rules_source": rules.get("source", "unknown"),
-                    "step_size_remainder": remainder,
-                    "step_size_tolerance": tolerance,
-                    "decimal_steps": float(quantity_steps),
-                    "is_aligned": is_aligned,
-                },
-            }
+            result = float(steps * decimal_step)
 
             return result
 
         except Exception as e:
-            self.logger.error(f"❌ Format precision error for {symbol}: {e}")
-            import traceback
+            self.logger.error(f"Step size rounding error: {e}")
+            return value
 
-            self.logger.error(f"   Traceback: {traceback.format_exc()}")
-            return {"success": False, "error": str(e), "symbol": symbol, "side": side}
-
-    async def execute_precision_order(
-        self, symbol: str, side: str, quantity: float, price: float
-    ) -> Dict:
-        """Enhanced execution with emergency fallback for LOT_SIZE errors"""
+    async def calculate_valid_order_from_usd(
+        self, symbol: str, side: str, usd_amount: float, price: float
+    ):
+        """
+        UNIVERSAL METHOD: Calculate valid order parameters from any USD amount
+        This is the key method that adapts ANY amount to Binance requirements
+        """
         try:
             self.logger.info(
-                f"🎯 EXECUTING PRECISION ORDER: {symbol} {side} {quantity} @ {price}"
+                f"🎯 Calculating valid order for {symbol}: ${usd_amount} at ${price}"
             )
 
-            # Format the order with enhanced precision
-            formatted_order = await self.format_precision_order(
-                symbol, side, quantity, price
-            )
+            # Get real exchange rules
+            rules = await self.get_real_exchange_info(symbol)
 
-            if not formatted_order["success"]:
-                self.logger.error(
-                    f"❌ Order formatting failed for {symbol}: {formatted_order['validation_errors']}"
+            # Calculate initial quantity from USD amount
+            initial_quantity = usd_amount / price
+
+            # Round price to valid tick size
+            valid_price = self._round_to_step_size(price, rules["tickSize"])
+            valid_price = max(rules["minPrice"], min(rules["maxPrice"], valid_price))
+
+            # Round quantity to valid step size
+            valid_quantity = self._round_to_step_size(
+                initial_quantity, rules["stepSize"]
+            )
+            valid_quantity = max(rules["minQty"], min(rules["maxQty"], valid_quantity))
+
+            # Calculate actual notional value
+            actual_notional = valid_quantity * valid_price
+
+            # Check minimum notional requirement
+            if actual_notional < rules["minNotional"]:
+                # Adjust quantity up to meet minimum notional
+                required_quantity = rules["minNotional"] / valid_price
+                valid_quantity = self._round_to_step_size(
+                    required_quantity, rules["stepSize"]
                 )
-                return {
-                    "success": False,
-                    "error": "Order formatting failed",
-                    "details": formatted_order["validation_errors"],
-                }
 
-            # Log what we're about to send to Binance
-            self.logger.info(f"📤 SENDING TO BINANCE: {symbol} {side}")
-            self.logger.info(f"   Quantity: '{formatted_order['quantity_str']}'")
-            self.logger.info(f"   Price: '{formatted_order['price_str']}'")
-            self.logger.info(f"   Notional: ${formatted_order['notional_value']:.2f}")
-
-            # Execute the order with error handling
-            try:
-                if side.upper() == "BUY":
-                    order = self.binance_client.order_limit_buy(
-                        symbol=symbol,
-                        quantity=formatted_order["quantity_str"],
-                        price=formatted_order["price_str"],
-                        recvWindow=60000,
+                # Ensure we don't exceed max quantity
+                if valid_quantity > rules["maxQty"]:
+                    # Try adjusting price down slightly
+                    adjusted_price = rules["minNotional"] / rules["maxQty"]
+                    valid_price = self._round_to_step_size(
+                        adjusted_price, rules["tickSize"]
                     )
-                else:
-                    order = self.binance_client.order_limit_sell(
-                        symbol=symbol,
-                        quantity=formatted_order["quantity_str"],
-                        price=formatted_order["price_str"],
-                        recvWindow=60000,
-                    )
+                    valid_quantity = rules["maxQty"]
 
-                # Success
-                if order and order.get("status") in ["NEW", "PARTIALLY_FILLED"]:
-                    result = {
-                        "success": True,
-                        "order_id": order["orderId"],
-                        "symbol": symbol,
-                        "side": side,
-                        "quantity": float(order["origQty"]),
-                        "price": float(order["price"]),
-                        "status": order["status"],
-                    }
+                actual_notional = valid_quantity * valid_price
 
-                    self.logger.info(
-                        f"✅ SUCCESS: {symbol} {side} {result['quantity']} @ {result['price']}"
-                    )
-                    return result
-                else:
-                    self.logger.error(f"❌ Unexpected order response: {order}")
-                    return {
-                        "success": False,
-                        "error": "Unexpected order response",
-                        "order_response": order,
-                    }
+            # Format strings with correct precision
+            price_str = f"{valid_price:.{rules['price_precision']}f}".rstrip(
+                "0"
+            ).rstrip(".")
+            quantity_str = f"{valid_quantity:.{rules['quantity_precision']}f}".rstrip(
+                "0"
+            ).rstrip(".")
 
-            except Exception as api_error:
-                error_str = str(api_error)
+            # Ensure minimum decimal places for display
+            if "." not in price_str and rules["price_precision"] > 0:
+                price_str += ".00"
+            if "." not in quantity_str and rules["quantity_precision"] > 0:
+                quantity_str += ".00000"
 
-                # EMERGENCY FALLBACK for LOT_SIZE errors
-                if "LOT_SIZE" in error_str:
-                    self.logger.error(f"🚨 LOT_SIZE ERROR DETECTED: {error_str}")
-                    self.logger.error(f"   Original quantity: {quantity}")
-                    self.logger.error(
-                        f"   Formatted quantity: {formatted_order['formatted_quantity']}"
-                    )
-                    self.logger.error(
-                        f"   Quantity string: '{formatted_order['quantity_str']}'"
-                    )
-                    self.logger.error(
-                        f"   Debug info: {formatted_order.get('debug_info', {})}"
-                    )
+            self.logger.info("📊 Valid order calculated:")
+            self.logger.info(
+                f"   💰 Original: ${usd_amount} → Actual: ${actual_notional:.2f}"
+            )
+            self.logger.info(f"   📦 Quantity: {initial_quantity:.8f} → {quantity_str}")
+            self.logger.info(f"   💲 Price: ${price:.8f} → ${price_str}")
 
-                    # Try emergency quantity adjustment
-                    return await self._emergency_lot_size_fix(
-                        symbol, side, quantity, price, formatted_order
-                    )
-
-                # Re-raise other errors
-                raise api_error
-
-        except Exception as e:
-            self.logger.error(f"❌ Precision order execution error: {e}")
-            return {"success": False, "error": str(e), "symbol": symbol, "side": side}
-
-    async def _emergency_lot_size_fix(
-        self,
-        symbol: str,
-        side: str,
-        original_quantity: float,
-        price: float,
-        failed_order: Dict,
-    ) -> Dict:
-        """Emergency attempt to fix LOT_SIZE by trying different quantities"""
-        try:
-            self.logger.warning(f"🚨 EMERGENCY LOT_SIZE FIX for {symbol}")
-
-            rules = await self.get_symbol_precision_rules(symbol)
-            step_size = rules["step_size"]
-            min_quantity = rules["min_quantity"]
-
-            # Try multiple emergency quantities
-            emergency_quantities = [
-                min_quantity,  # Use exact minimum
-                min_quantity * 2,  # Double minimum
-                min_quantity * 5,  # 5x minimum
-                round(original_quantity / step_size) * step_size,  # Force round to step
-                (round(original_quantity / step_size) + 1) * step_size,  # Next step up
-            ]
-
-            for emergency_qty in emergency_quantities:
-                try:
-                    if emergency_qty < min_quantity:
-                        continue
-
-                    # Format exactly to step size
-                    exact_qty = round(emergency_qty / step_size) * step_size
-                    notional = exact_qty * price
-
-                    if notional < rules["min_notional"]:
-                        continue
-
-                    qty_str = f"{exact_qty:.{rules['quantity_precision']}f}".rstrip(
-                        "0"
-                    ).rstrip(".")
-                    price_str = f"{price:.{rules['price_precision']}f}".rstrip(
-                        "0"
-                    ).rstrip(".")
-
-                    self.logger.warning(
-                        f"🔧 EMERGENCY ATTEMPT: {qty_str} @ {price_str}"
-                    )
-
-                    # Try the emergency order
-                    if side.upper() == "BUY":
-                        order = self.binance_client.order_limit_buy(
-                            symbol=symbol,
-                            quantity=qty_str,
-                            price=price_str,
-                            recvWindow=60000,
-                        )
-                    else:
-                        order = self.binance_client.order_limit_sell(
-                            symbol=symbol,
-                            quantity=qty_str,
-                            price=price_str,
-                            recvWindow=60000,
-                        )
-
-                    if order and order.get("status") in ["NEW", "PARTIALLY_FILLED"]:
-                        self.logger.warning(
-                            f"🎯 EMERGENCY SUCCESS: {symbol} {side} {order['origQty']} @ {order['price']}"
-                        )
-                        return {
-                            "success": True,
-                            "order_id": order["orderId"],
-                            "symbol": symbol,
-                            "side": side,
-                            "quantity": float(order["origQty"]),
-                            "price": float(order["price"]),
-                            "status": order["status"],
-                            "emergency_fix": True,
-                        }
-
-                except Exception as emergency_error:
-                    self.logger.warning(
-                        f"   Emergency attempt failed: {emergency_error}"
-                    )
-                    continue
-
-            # All emergency attempts failed
-            self.logger.error(f"💥 ALL EMERGENCY ATTEMPTS FAILED for {symbol}")
             return {
-                "success": False,
-                "error": "Emergency LOT_SIZE fix failed",
-                "symbol": symbol,
-                "side": side,
+                "success": True,
+                "original_usd_amount": usd_amount,
+                "actual_notional": actual_notional,
+                "valid_quantity": valid_quantity,
+                "valid_price": valid_price,
+                "quantity_str": quantity_str,
+                "price_str": price_str,
+                "rules_used": {
+                    "tickSize": rules["tickSize"],
+                    "stepSize": rules["stepSize"],
+                    "minNotional": rules["minNotional"],
+                },
             }
 
         except Exception as e:
-            self.logger.error(f"💥 Emergency fix crashed: {e}")
+            self.logger.error(f"❌ Error calculating valid order: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def execute_precision_order(
+        self, symbol: str, side: str, quantity: float, price: float
+    ):
+        """Execute order with universal precision handling"""
+        try:
+            # Calculate USD amount from inputs
+            usd_amount = quantity * price
+
+            # Get valid order parameters
+            valid_order = await self.calculate_valid_order_from_usd(
+                symbol, side, usd_amount, price
+            )
+
+            if not valid_order["success"]:
+                return {
+                    "success": False,
+                    "error": f"Could not calculate valid order: {valid_order.get('error')}",
+                }
+
+            # Log what we're sending to Binance
+            self.logger.info(f"📤 Executing {symbol} {side} order:")
+            self.logger.info(f"   📦 Quantity: {valid_order['quantity_str']}")
+            self.logger.info(f"   💲 Price: {valid_order['price_str']}")
+            self.logger.info(f"   💰 Notional: ${valid_order['actual_notional']:.2f}")
+
+            # Execute the order
+            if side.upper() == "BUY":
+                order = self.binance_client.order_limit_buy(
+                    symbol=symbol,
+                    quantity=valid_order["quantity_str"],
+                    price=valid_order["price_str"],
+                    recvWindow=60000,
+                )
+            else:
+                order = self.binance_client.order_limit_sell(
+                    symbol=symbol,
+                    quantity=valid_order["quantity_str"],
+                    price=valid_order["price_str"],
+                    recvWindow=60000,
+                )
+
+            self.logger.info("✅ Order executed successfully!")
+            self.logger.info(f"   🆔 Order ID: {order['orderId']}")
+            self.logger.info(f"   📊 Actual: {order['origQty']} @ {order['price']}")
+
             return {
-                "success": False,
-                "error": f"Emergency fix crashed: {e}",
+                "success": True,
+                "order_id": order["orderId"],
+                "quantity": float(order["origQty"]),
+                "price": float(order["price"]),
                 "symbol": symbol,
                 "side": side,
+                "status": order["status"],
+                "original_request": {
+                    "requested_quantity": quantity,
+                    "requested_price": price,
+                    "requested_notional": usd_amount,
+                },
+                "actual_execution": {
+                    "executed_quantity": float(order["origQty"]),
+                    "executed_price": float(order["price"]),
+                    "executed_notional": float(order["origQty"])
+                    * float(order["price"]),
+                },
+            }
+
+        except Exception as e:
+            self.logger.error(f"❌ Order execution failed for {symbol} {side}: {e}")
+
+            # Log detailed error for debugging
+            if "Filter failure" in str(e):
+                self.logger.error("   🔍 Filter failure - check precision requirements")
+                self.logger.error(f"   📦 Requested quantity: {quantity}")
+                self.logger.error(f"   💲 Requested price: {price}")
+
+            return {
+                "success": False,
+                "error": str(e),
+                "symbol": symbol,
+                "side": side,
+                "requested_quantity": quantity,
+                "requested_price": price,
+            }
+
+    async def format_precision_order(
+        self, symbol: str, side: str, quantity: float, price: float
+    ):
+        """Format order with precision - uses universal method"""
+        try:
+            # Use the universal calculation method
+            usd_amount = quantity * price
+            valid_order = await self.calculate_valid_order_from_usd(
+                symbol, side, usd_amount, price
+            )
+
+            if valid_order["success"]:
+                return {
+                    "success": True,
+                    "formatted_quantity": valid_order["valid_quantity"],
+                    "formatted_price": valid_order["valid_price"],
+                    "quantity_str": valid_order["quantity_str"],
+                    "price_str": valid_order["price_str"],
+                    "notional_value": valid_order["actual_notional"],
+                    "validation_errors": [],
+                }
+            else:
+                return {
+                    "success": False,
+                    "validation_errors": [
+                        valid_order.get("error", "Unknown formatting error")
+                    ],
+                }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "validation_errors": [f"Formatting error: {str(e)}"],
             }
 
 
