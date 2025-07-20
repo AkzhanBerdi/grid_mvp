@@ -16,13 +16,17 @@ Changes from previous version:
 
 import asyncio
 import logging
+import sqlite3
 import time
+from datetime import datetime
 from typing import Dict, Optional
 
 from binance.client import Client
 
+from config import Config
 from models.client import GridStatus
 from repositories.client_repository import ClientRepository
+from services.consolidated_trading_notifier import TradingNotificationManager
 from services.single_advanced_grid_manager import SingleAdvancedGridManager
 from utils.crypto import CryptoUtils
 
@@ -75,6 +79,8 @@ class GridOrchestrator:
             "system_uptime_start": time.time(),
             "last_optimization": 0,
         }
+        self.notification_manager = TradingNotificationManager(self.fifo_service)
+        self.last_daily_summary = None
 
         self.logger.info(
             "🚀 GridOrchestrator initialized for Single Advanced Grid System"
@@ -837,6 +843,8 @@ class GridOrchestrator:
                 except Exception as e:
                     self.logger.error(f"❌ Update error for client {client_id}: {e}")
 
+            await self.check_and_send_daily_summaries()
+
             return {
                 "success": True,
                 "updated_grids": updated_grids,
@@ -986,3 +994,41 @@ class GridOrchestrator:
         except Exception as e:
             self.logger.error(f"❌ API test failed for client {client_id}: {e}")
             return {"success": False, "error": str(e)}
+
+    async def check_and_send_daily_summaries(self):
+        """Check if we should send daily summaries to clients"""
+        try:
+            now = datetime.now()
+
+            # Send daily summary once per day at 9 AM
+            should_send = False
+            if self.last_daily_summary is None:
+                should_send = True
+            elif now.hour == 9 and now.minute < 5:  # 9:00-9:05 AM
+                if self.last_daily_summary.date() < now.date():
+                    should_send = True
+
+            if should_send:
+                # Get all active clients
+                with sqlite3.connect(Config.DATABASE_PATH) as conn:
+                    cursor = conn.execute(
+                        "SELECT telegram_id FROM clients WHERE status = 'active'"
+                    )
+                    active_clients = [row[0] for row in cursor.fetchall()]
+
+                # Send summary to each client
+                for client_id in active_clients:
+                    try:
+                        await self.notification_manager.send_daily_summary(client_id)
+                    except Exception as e:
+                        self.logger.error(
+                            f"Error sending summary to client {client_id}: {e}"
+                        )
+
+                self.last_daily_summary = now
+                self.logger.info(
+                    f"✅ Daily summaries sent to {len(active_clients)} clients"
+                )
+
+        except Exception as e:
+            self.logger.error(f"Error in daily summary check: {e}")

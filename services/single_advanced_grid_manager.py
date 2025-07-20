@@ -24,6 +24,7 @@ from services.api_error_notifier import APIErrorNotifier
 from services.fifo_service import FIFOService
 from services.inventory_manager import SingleGridInventoryManager
 from services.market_analysis import MarketAnalysisService
+from services.working_fifo_integration import WorkingFIFOIntegration
 
 # Import from your actual existing services (no ADVANCED_FEATURES flag)
 try:
@@ -314,6 +315,10 @@ class SingleAdvancedGridManager:
         self.trade_repo = TradeRepository()
 
         # Services
+        # 🔥 REPLACE: Use working integration instead of the broken one
+        self.working_integration = WorkingFIFOIntegration(client_id)
+        self.logger.info("✅ Working notification integration initialized")
+        self.logger.info("✅ FIXED Grid notification integration initialized")
         self.fifo_service = FIFOService()
         if MARKET_ANALYSIS_AVAILABLE:
             self.market_analysis = MarketAnalysisService(binance_client)
@@ -1726,9 +1731,25 @@ class SingleAdvancedGridManager:
                     self.inventory_manager.update_after_fill(
                         symbol, "BUY", level["quantity"], level["price"]
                     )
-
+                    # 🔥 ADD THIS: Log trade execution to database
+                    self.trade_repo.log_trade_execution(
+                        client_id=self.client_id,
+                        symbol=symbol,
+                        side="BUY",
+                        quantity=level["quantity"],
+                        price=level["price"],
+                        order_id=level["order_id"],
+                    )
                     self.logger.info(
                         f"💰 BUY order filled: Level {level['level']} - {level['quantity']:.4f} @ ${level['price']:.2f}"
+                    )
+                    # 🔥 NEW: Send notification for order fill
+                    await self.working_integration.on_order_filled(
+                        symbol,
+                        "BUY",
+                        level["quantity"],
+                        level["price"],
+                        level.get("level"),
                     )
 
                     # Create replacement sell order with inventory check
@@ -1750,9 +1771,25 @@ class SingleAdvancedGridManager:
                     self.inventory_manager.update_after_fill(
                         symbol, "SELL", level["quantity"], level["price"]
                     )
-
+                    # 🔥 ADD THIS: Log trade execution to database
+                    self.trade_repo.log_trade_execution(
+                        client_id=self.client_id,
+                        symbol=symbol,
+                        side="SELL",
+                        quantity=level["quantity"],
+                        price=level["price"],
+                        order_id=level["order_id"],
+                    )
                     self.logger.info(
                         f"💰 SELL order filled: Level {level['level']} - {level['quantity']:.4f} @ ${level['price']:.2f}"
+                    )
+                    # 🔥 NEW: Send notification for order fill
+                    await self.working_integration.on_order_filled(
+                        symbol,
+                        "SELL",
+                        level["quantity"],
+                        level["price"],
+                        level.get("level"),
                     )
 
                     # Create replacement buy order with inventory check
@@ -1772,6 +1809,13 @@ class SingleAdvancedGridManager:
 
         except Exception as e:
             self.logger.error(f"❌ Order replacement error for {symbol}: {e}")
+
+            await self.grid_integration.on_api_error(
+                error_code=str(getattr(e, "code", "UNKNOWN")),
+                error_message=str(e),
+                symbol=symbol,
+                operation="order_placement",
+            )
 
     async def _create_replacement_sell_order(
         self, symbol: str, filled_buy_level: Dict, grid_config: SingleAdvancedGridConfig
@@ -1879,6 +1923,13 @@ class SingleAdvancedGridManager:
         except Exception as e:
             self.logger.error(f"❌ Create replacement sell order error: {e}")
 
+            await self.grid_integration.on_api_error(
+                error_code=str(getattr(e, "code", "UNKNOWN")),
+                error_message=str(e),
+                symbol=symbol,
+                operation="order_placement",
+            )
+
     async def _create_replacement_buy_order(
         self,
         symbol: str,
@@ -1981,6 +2032,12 @@ class SingleAdvancedGridManager:
                         self.logger.error(
                             f"❌ Failed to place replacement BUY order: {e}"
                         )
+                        await self.grid_integration.on_api_error(
+                            error_code=str(getattr(e, "code", "UNKNOWN")),
+                            error_message=str(e),
+                            symbol=symbol,
+                            operation="order_placement",
+                        )
                 else:
                     self.logger.warning(
                         "⚠️ Could not reserve inventory for replacement BUY order"
@@ -1990,6 +2047,13 @@ class SingleAdvancedGridManager:
 
         except Exception as e:
             self.logger.error(f"❌ Create replacement buy order error: {e}")
+
+            await self.grid_integration.on_api_error(
+                error_code=str(getattr(e, "code", "UNKNOWN")),
+                error_message=str(e),
+                symbol=symbol,
+                operation="order_placement",
+            )
 
     def _should_log_inventory(self) -> bool:
         """Helper to determine when to log inventory status (every 5 minutes)"""
