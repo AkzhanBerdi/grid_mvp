@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
-"""
-GridTrader Pro - Simplified Client Service
-Production-ready grid trading for paying clients
-WITH PHASE 4 ENHANCED NETWORK RECOVERY - COMPLETE FIXED VERSION
-"""
-
 import asyncio
 import logging
-import os
 import sqlite3
 import sys
 from datetime import datetime, timedelta
@@ -25,13 +18,11 @@ from config import Config
 from database.db_setup import DatabaseSetup
 from handlers.client_handler import ClientHandler
 from services.fifo_service import FIFOService
+from services.grid_orchestrator import GridOrchestrator
+from services.telegram_notifier import TelegramNotifier
 from utils.fifo_telegram_monitor import FIFOMonitoringService
 from utils.network_recovery import EnhancedNetworkRecovery
 from utils.network_utils import NetworkUtils
-
-ADVANCED_FEATURES_ENABLED = (
-    os.environ.get("ADVANCED_FEATURES", "false").lower() == "true"
-)
 
 
 class GridTradingService:
@@ -43,64 +34,22 @@ class GridTradingService:
 
         # Initialize components
         self.db_setup = DatabaseSetup()
-
-        # ENHANCED GRID ORCHESTRATOR SELECTION
-        if ADVANCED_FEATURES_ENABLED:
-            try:
-                # Use Enhanced Grid Orchestrator with Advanced Features
-                from services.grid_orchestrator import GridOrchestrator
-
-                self.grid_orchestrator = GridOrchestrator()
-                self.logger.info(
-                    "🚀 ADVANCED FEATURES ENABLED - Enhanced Grid Orchestrator loaded"
-                )
-            except ImportError as e:
-                self.logger.warning(f"Enhanced orchestrator not available: {e}")
-                self.logger.info("Falling back to standard orchestrator")
-                from services.grid_orchestrator import GridOrchestrator
-
-                self.grid_orchestrator = GridOrchestrator()
-        else:
-            # Use Standard Grid Orchestrator
-
-            self.grid_orchestrator = GridOrchestrator()
-            self.logger.info("📊 Standard Grid Orchestrator loaded")
-
+        self.grid_orchestrator = GridOrchestrator()
         self.handler = ClientHandler()
-
-        # Enhanced Network Recovery (Phase 4)
         self.network_recovery = EnhancedNetworkRecovery()
-
-        # FIFO Profit Monitoring (Phase 3)
         self.fifo_service = FIFOService()
         self.fifo_monitoring_service = FIFOMonitoringService()
 
         # Error tracking
         self._error_count = 0
         self._last_successful_update = datetime.now()
-
-        # Enhanced startup message
-        if ADVANCED_FEATURES_ENABLED:
-            self.logger.info("🎯 GridTrader Pro Client Service with ADVANCED FEATURES")
-            self.logger.info("   💰 Compound Interest Management: ACTIVE")
-            self.logger.info("   ⏰ Intelligent Market Timing: ACTIVE")
-            self.logger.info("   🛡️ Volatility Risk Management: ACTIVE")
-            self.logger.info("   🔄 Smart Auto-Reset: ACTIVE")
-            self.logger.info("   🎯 Precision Order Handling: ACTIVE")
-            self.logger.info("   📊 Advanced Performance Monitoring: ACTIVE")
-        else:
-            self.logger.info("🤖 GridTrader Pro Client Service - Standard Mode")
-
         self.last_health_check = datetime.now()
         self.health_check_interval = timedelta(minutes=5)
 
         # Service state
         self.running = False
         self.telegram_app = None
-
-        self.logger.info(
-            "🤖 GridTrader Pro Client Service initialized with Enhanced Network Recovery"
-        )
+        self.logger.info("🤖Service initialized")
 
     def _setup_logging(self) -> logging.Logger:
         """Setup logging configuration"""
@@ -701,19 +650,14 @@ def main():
     print("=" * 50)
 
     # Show feature status
-    if ADVANCED_FEATURES_ENABLED:
-        print("🎯 ADVANCED FEATURES MODE")
-        print("✅ Enhanced Dual-Scale Grid Manager")
-        print("✅ Compound Interest Management")
-        print("✅ Intelligent Market Timing")
-        print("✅ Volatility-based Risk Management")
-        print("✅ Smart Grid Auto-Reset")
-        print("✅ Precision Order Handling")
-        print("✅ Advanced Performance Monitoring")
-    else:
-        print("📊 STANDARD MODE")
-        print("✅ Basic Dual-Scale Grid Trading")
-        print("💡 Enable advanced features with: export ADVANCED_FEATURES=true")
+    print("🎯 ADVANCED FEATURES MODE")
+    print("✅ Enhanced Dual-Scale Grid Manager")
+    print("✅ Compound Interest Management")
+    print("✅ Intelligent Market Timing")
+    print("✅ Volatility-based Risk Management")
+    print("✅ Smart Grid Auto-Reset")
+    print("✅ Precision Order Handling")
+    print("✅ Advanced Performance Monitoring")
 
     print("✅ Real trading only - no trials or demos")
     print("✅ Client API key management")

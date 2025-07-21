@@ -21,6 +21,8 @@ from models.single_advanced_grid_config import SingleAdvancedGridConfig
 from repositories.client_repository import ClientRepository
 from repositories.trade_repository import TradeRepository
 from services.advanced_trading_features import (
+    IntelligentMarketTimer,
+    PrecisionOrderHandler,
     SmartGridAutoReset,
     VolatilityBasedRiskManager,
 )
@@ -29,65 +31,30 @@ from services.fifo_service import FIFOService
 from services.inventory_manager import SingleGridInventoryManager
 from services.market_analysis import MarketAnalysisService
 from services.working_fifo_integration import WorkingFIFOIntegration
+from utils.fifo_telegram_monitor import FIFOMonitoringService
 
-# Import from your actual existing services (no ADVANCED_FEATURES flag)
+# Replace the entire compound manager section with this:
 try:
-    # Import your existing compound interest manager
-    from services.compound_interest_manager import CompoundIntegrationService
+    from services.compound_interest_manager import CompoundInterestManager
+    from services.fifo_service import FIFOService
 
     COMPOUND_AVAILABLE = True
 
-    # Create wrapper for compatibility with single grid architecture
-    class CompoundInterestManager:
-        def __init__(self, client_id):
-            self.compound_service = CompoundIntegrationService(FIFOService())
-            self.client_id = client_id
-            self.logger = logging.getLogger(__name__)
+    def create_advanced_compound_manager(client_id):
+        """Create advanced compound manager with FIFO integration"""
+        fifo_service = FIFOService()
+        return CompoundInterestManager(fifo_service)
 
-        async def get_current_order_size(self, client_id, symbol, base_capital):
-            try:
-                # Use your existing compound service logic
-                return base_capital / 10  # Base: divide by 10 levels
-            except Exception as e:
-                self.logger.error(f"Error calculating order size: {e}")
-                return base_capital / 10
-
-        def get_current_multiplier(self):
-            return 1.0
-
-        def get_compound_status(self):
-            return {
-                "compound_active": True,
-                "current_multiplier": 1.0,
-                "current_order_size": 100.0,
-                "status": "Active",
-            }
-
-        async def calculate_kelly_fraction(self, client_id, symbol):
-            return 0.1  # Conservative default
-
-except ImportError as e:
+except ImportError:
     COMPOUND_AVAILABLE = False
-    logger = logging.getLogger(__name__)
-    logger.warning(f"⚠️ Compound interest manager not available: {e}")
 
-    # Minimal compound manager
+    # Simple fallback
     class CompoundInterestManager:
-        def __init__(self, client_id):
-            self.client_id = client_id
-            self.logger = logging.getLogger(__name__)
+        def __init__(self, fifo_service):
+            self.fifo_service = fifo_service
 
         async def get_current_order_size(self, client_id, symbol, base_capital):
             return base_capital / 10
-
-        def get_current_multiplier(self):
-            return 1.0
-
-        def get_compound_status(self):
-            return {"compound_active": False, "status": "Not available"}
-
-        async def calculate_kelly_fraction(self, client_id, symbol):
-            return 0.1
 
 
 # Import other services you have available
@@ -99,203 +66,6 @@ except ImportError:
     MARKET_ANALYSIS_AVAILABLE = False
     logger = logging.getLogger(__name__)
     logger.warning("Market analysis service not available")
-
-
-# Create simple implementations for services that don't exist yet
-class IntelligentMarketTimer:
-    def __init__(self):
-        self.logger = logging.getLogger(__name__)
-
-    def get_session_info(self):
-        return {
-            "session_recommendation": "Normal trading session",
-            "trading_intensity": 1.0,
-            "optimal_check_interval": 30,
-            "should_place_orders": True,
-        }
-
-    def should_place_orders_now(self):
-        return True
-
-    def get_optimal_check_interval(self):
-        return 30  # 30 seconds default
-
-
-class PrecisionOrderHandler:
-    def __init__(self, binance_client):
-        self.binance_client = binance_client
-        self.logger = logging.getLogger(__name__)
-
-    async def execute_precision_order(self, symbol, side, quantity, price):
-        """Execute order with basic precision handling"""
-        try:
-            # Format precision
-            quantity_str = f"{quantity:.8f}".rstrip("0").rstrip(".")
-            price_str = f"{price:.8f}".rstrip("0").rstrip(".")
-
-            if side == "BUY":
-                order = self.binance_client.order_limit_buy(
-                    symbol=symbol, quantity=quantity_str, price=price_str
-                )
-            else:
-                order = self.binance_client.order_limit_sell(
-                    symbol=symbol, quantity=quantity_str, price=price_str
-                )
-
-            return {
-                "success": True,
-                "order_id": order["orderId"],
-                "quantity": float(order["origQty"]),
-                "price": float(order["price"]),
-            }
-        except Exception as e:
-            self.logger.error(f"Order execution error: {e}")
-            return {"success": False, "error": str(e)}
-
-    async def format_precision_order(self, symbol, side, quantity, price):
-        """Format order with precision validation"""
-        try:
-            # Basic validation
-            notional_value = quantity * price
-
-            if notional_value < 10.0:  # Minimum notional
-                return {
-                    "success": False,
-                    "validation_errors": [
-                        f"Notional value ${notional_value:.2f} below minimum $10.00"
-                    ],
-                }
-
-            return {
-                "success": True,
-                "formatted_quantity": quantity,
-                "formatted_price": price,
-                "notional_value": notional_value,
-                "validation_errors": [],
-            }
-        except Exception as e:
-            return {"success": False, "validation_errors": [str(e)]}
-
-
-class VolatilityBasedRiskManager:
-    def __init__(self, binance_client, symbol, risk_threshold=1.0):
-        self.binance_client = binance_client
-        self.symbol = symbol
-        self.risk_threshold = risk_threshold
-        self.logger = logging.getLogger(__name__)
-
-    async def get_risk_adjusted_parameters(self, base_order_size, base_spacing):
-        """Get risk-adjusted parameters based on volatility"""
-        try:
-            # Basic volatility estimation using price data
-            ticker = self.binance_client.get_24hr_ticker(symbol=self.symbol)
-            price_change_pct = abs(float(ticker["priceChangePercent"]))
-
-            # Adjust spacing based on volatility
-            if price_change_pct > 5.0:  # High volatility
-                adjusted_spacing = base_spacing * 1.2
-                regime = "high_volatility"
-                multiplier = 0.8  # Smaller orders in high volatility
-            elif price_change_pct < 2.0:  # Low volatility
-                adjusted_spacing = base_spacing * 0.8
-                regime = "low_volatility"
-                multiplier = 1.1  # Larger orders in low volatility
-            else:
-                adjusted_spacing = base_spacing
-                regime = "moderate"
-                multiplier = 1.0
-
-            return {
-                "adjusted_order_size": base_order_size * multiplier,
-                "adjusted_grid_spacing": adjusted_spacing,
-                "regime": regime,
-                "order_size_multiplier": multiplier,
-                "volatility_score": price_change_pct / 10.0,  # Normalize to 0-1
-                "risk_level": "normal",
-            }
-        except Exception as e:
-            self.logger.error(f"Risk adjustment error: {e}")
-            return {
-                "adjusted_order_size": base_order_size,
-                "adjusted_grid_spacing": base_spacing,
-                "regime": "moderate",
-                "order_size_multiplier": 1.0,
-            }
-
-    async def should_pause_trading(self):
-        """Check if trading should be paused due to high volatility"""
-        try:
-            ticker = self.binance_client.get_24hr_ticker(symbol=self.symbol)
-            price_change_pct = abs(float(ticker["priceChangePercent"]))
-
-            if price_change_pct > 15.0:  # Very high volatility
-                return True, f"High volatility detected: {price_change_pct:.1f}%"
-
-            return False, "Normal conditions"
-        except Exception as e:
-            self.logger.error(f"Volatility check error: {e}")
-            return False, "Could not check volatility"
-
-
-class SmartGridAutoReset:
-    def __init__(self, symbol, client_id, aggressiveness=0.7):
-        self.symbol = symbol
-        self.client_id = client_id
-        self.aggressiveness = aggressiveness
-        self.logger = logging.getLogger(__name__)
-
-    def should_reset_grid(self, current_price, center_price):
-        """Check if grid should be reset based on price deviation"""
-        try:
-            if center_price == 0:
-                return False, "No center price set"
-
-            # Calculate price deviation from center
-            price_deviation = abs(current_price - center_price) / center_price
-
-            # Reset threshold based on aggressiveness
-            reset_threshold = 0.15 - (self.aggressiveness * 0.05)  # 0.10 to 0.15
-
-            should_reset = price_deviation > reset_threshold
-            reason = f"Price deviation: {price_deviation:.2%} (threshold: {reset_threshold:.1%})"
-
-            return should_reset, reason
-        except Exception as e:
-            self.logger.error(f"Reset check error: {e}")
-            return False, "Error in reset calculation"
-
-    async def calculate_new_grid_center(self, current_price):
-        """Calculate new center price for grid reset"""
-        return current_price
-
-
-class AdvancedPerformanceMonitor:
-    def __init__(self, client_id):
-        self.client_id = client_id
-        self.logger = logging.getLogger(__name__)
-
-    async def generate_comprehensive_report(self, days=30):
-        """Generate performance report"""
-        try:
-            # Basic performance metrics
-            return {
-                "performance_grade": "B+",
-                "overall_score": 75,
-                "total_trades": 0,
-                "profit": 0.0,
-                "report_period": f"{days} days",
-                "status": "Active monitoring",
-                "recommendations": ["Monitor grid efficiency", "Consider rebalancing"],
-            }
-        except Exception as e:
-            self.logger.error(f"Performance report error: {e}")
-            return {
-                "performance_grade": "N/A",
-                "overall_score": 0,
-                "total_trades": 0,
-                "profit": 0.0,
-                "error": str(e),
-            }
 
 
 class SingleAdvancedGridManager:
@@ -343,8 +113,16 @@ class SingleAdvancedGridManager:
             "kelly_adjustments": 0,
         }
 
+        # Then in your __init__ method:
+        if COMPOUND_AVAILABLE:
+            self.compound_manager = create_advanced_compound_manager(client_id)
+            self.logger.info(
+                "✅ Advanced CompoundInterestManager with Kelly Criterion activated"
+            )
+        else:
+            self.compound_manager = CompoundInterestManager(FIFOService())
+            self.logger.warning("⚠️ Using basic compound manager fallback")
         # Initialize advanced feature managers
-        self.compound_manager = CompoundInterestManager(client_id)
         self.market_timer = IntelligentMarketTimer()
         self.precision_handler = PrecisionOrderHandler(binance_client)
 
@@ -375,7 +153,9 @@ class SingleAdvancedGridManager:
                 "max_order_size_multiplier": 2.8,
             },
         }
-
+        # Add FIFO notification manager
+        self.notification_manager = FIFOMonitoringService()
+        self.logger.info("✅ FIFO Notification Manager initialized")
         self.logger.info("🚀 SingleAdvancedGridManager initialized")
         self.logger.info("   💰 Compound Management: UNIFIED")
         self.logger.info("   ⏰ Intelligent Market Timing: UNIFIED")
@@ -633,7 +413,7 @@ class SingleAdvancedGridManager:
         self, grid_config: SingleAdvancedGridConfig
     ) -> Dict:
         """
-        SIMPLE: Execute orders with pre-validated prices and quantities
+        ENHANCED: Execute orders with FIFO trade notifications
         """
         try:
             symbol = grid_config.symbol
@@ -675,9 +455,13 @@ class SingleAdvancedGridManager:
 
                     level["order_id"] = order["orderId"]
                     orders_placed += 1
+
                     self.logger.info(
                         f"✅ BUY Level {level['level']}: {order['origQty']} @ ${order['price']}"
                     )
+
+                    # 🔔 NOTIFY FIFO SYSTEM OF TRADE
+                    await self._notify_trade_execution(symbol, "BUY", order)
 
                 except Exception as e:
                     failed_orders += 1
@@ -713,9 +497,13 @@ class SingleAdvancedGridManager:
 
                     level["order_id"] = order["orderId"]
                     orders_placed += 1
+
                     self.logger.info(
                         f"✅ SELL Level {level['level']}: {order['origQty']} @ ${order['price']}"
                     )
+
+                    # 🔔 NOTIFY FIFO SYSTEM OF TRADE
+                    await self._notify_trade_execution(symbol, "SELL", order)
 
                 except Exception as e:
                     failed_orders += 1
@@ -731,12 +519,14 @@ class SingleAdvancedGridManager:
             self.logger.info(f"   🎯 Orders placed: {orders_placed}")
             self.logger.info(f"   ❌ Failed orders: {failed_orders}")
             self.logger.info(f"   📊 Success rate: {success_rate:.1f}%")
+            self.logger.info(f"   🔔 FIFO notifications sent: {orders_placed}")
 
             return {
                 "success": orders_placed > 0,
                 "orders_placed": orders_placed,
                 "failed_orders": failed_orders,
                 "success_rate": f"{success_rate:.1f}%",
+                "fifo_notifications_sent": orders_placed,
             }
 
         except Exception as e:
@@ -2542,6 +2332,29 @@ class SingleAdvancedGridManager:
         except Exception as e:
             self.logger.debug(f"⚠️ Grid maintenance warning for {symbol}: {e}")
             # Don't let maintenance errors break the main flow
+
+    async def _notify_trade_execution(self, symbol: str, side: str, order: dict):
+        """Notify FIFO monitoring system of trade execution"""
+        try:
+            if hasattr(self, "notification_manager"):
+                # Ensure client monitoring is set up
+                await self.notification_manager.add_client_monitor(self.client_id)
+
+                # Notify the trade execution
+                await self.notification_manager.on_trade_executed(
+                    client_id=self.client_id,
+                    symbol=symbol,
+                    side=side,
+                    quantity=float(order["origQty"]),
+                    price=float(order["price"]),
+                )
+
+                self.logger.debug(
+                    f"📊 FIFO notification: {symbol} {side} {order['origQty']}@{order['price']}"
+                )
+
+        except Exception as e:
+            self.logger.error(f"❌ Error notifying trade execution: {e}")
 
 
 # ADD this helper function outside the class

@@ -31,7 +31,7 @@ from services.single_advanced_grid_manager import SingleAdvancedGridManager
 from utils.crypto import CryptoUtils
 
 try:
-    from services.telegram_notifier import TelegramNotifier
+    from utils.fifo_telegram_monitor import FIFOMonitoringService
 except ImportError:
     # Fallback if TelegramNotifier doesn't exist
     class TelegramNotifier:
@@ -66,6 +66,8 @@ class GridOrchestrator:
 
         # Binance clients cache (matches your existing pattern)
         self.binance_clients: Dict[int, Client] = {}
+        self.notification_manager = FIFOMonitoringService()
+        self.last_daily_summary = None
 
         # Monitoring state
         self.monitoring_active = False
@@ -996,7 +998,7 @@ class GridOrchestrator:
             return {"success": False, "error": str(e)}
 
     async def check_and_send_daily_summaries(self):
-        """Check if we should send daily summaries to clients"""
+        """Check if we should send daily summaries to clients with FIFO profit data"""
         try:
             now = datetime.now()
 
@@ -1017,9 +1019,16 @@ class GridOrchestrator:
                     active_clients = [row[0] for row in cursor.fetchall()]
 
                 # Send summary to each client
+                summary_count = 0
                 for client_id in active_clients:
                     try:
-                        await self.notification_manager.send_daily_summary(client_id)
+                        # Ensure client has monitoring set up
+                        await self.notification_manager.add_client_monitor(client_id)
+
+                        # Send the daily summary
+                        await self.notification_manager.send_profit_status(client_id)
+                        summary_count += 1
+
                     except Exception as e:
                         self.logger.error(
                             f"Error sending summary to client {client_id}: {e}"
@@ -1027,8 +1036,29 @@ class GridOrchestrator:
 
                 self.last_daily_summary = now
                 self.logger.info(
-                    f"✅ Daily summaries sent to {len(active_clients)} clients"
+                    f"✅ FIFO daily summaries sent to {summary_count}/{len(active_clients)} clients"
                 )
 
         except Exception as e:
-            self.logger.error(f"Error in daily summary check: {e}")
+            self.logger.error(f"Error in FIFO daily summary check: {e}")
+
+    # Add this method to your class:
+    async def on_trade_completed(
+        self, client_id: int, symbol: str, side: str, quantity: float, price: float
+    ):
+        """Called when a trade is executed - notify FIFO monitor"""
+        try:
+            # Ensure client monitoring is set up
+            await self.notification_manager.add_client_monitor(client_id)
+
+            # Notify the trade execution
+            await self.notification_manager.on_trade_executed(
+                client_id, symbol, side, quantity, price
+            )
+
+            self.logger.debug(
+                f"📊 Trade notification sent: {client_id} {symbol} {side} {quantity}@{price}"
+            )
+
+        except Exception as e:
+            self.logger.error(f"Error notifying trade completion: {e}")
