@@ -1837,7 +1837,11 @@ class SingleAdvancedGridManager:
             )
 
             # Calculate order size (same USD value as original)
-            order_usd = filled_buy_level["order_size_usd"]
+            # Get compound-enhanced order size
+            compound_order_size = await self.compound_manager.get_current_order_size(
+                self.client_id, symbol, grid_config.total_capital
+            )
+            order_usd = compound_order_size  # Growing with profits!
             raw_quantity = order_usd / valid_sell_price
 
             # Make quantity valid
@@ -1953,7 +1957,11 @@ class SingleAdvancedGridManager:
             )
 
             # Calculate order size (same USD value as original)
-            order_usd = filled_sell_level["order_size_usd"]
+            # Get compound-enhanced order size
+            compound_order_size = await self.compound_manager.get_current_order_size(
+                self.client_id, symbol, grid_config.total_capital
+            )
+            order_usd = compound_order_size  # Growing with profits!
             raw_quantity = order_usd / valid_buy_price
 
             # Make quantity valid
