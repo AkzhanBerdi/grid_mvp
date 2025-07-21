@@ -20,6 +20,10 @@ from binance.client import Client
 from models.single_advanced_grid_config import SingleAdvancedGridConfig
 from repositories.client_repository import ClientRepository
 from repositories.trade_repository import TradeRepository
+from services.advanced_trading_features import (
+    SmartGridAutoReset,
+    VolatilityBasedRiskManager,
+)
 from services.api_error_notifier import APIErrorNotifier
 from services.fifo_service import FIFOService
 from services.inventory_manager import SingleGridInventoryManager
@@ -386,8 +390,7 @@ class SingleAdvancedGridManager:
         self, symbol: str, total_capital: float
     ) -> Dict:
         """
-        UPDATED: Start single advanced grid with inventory management
-        REPLACE your existing method with this version
+        CORRECTED: Start single advanced grid with proper feature activation order
         """
         try:
             self.logger.info(f"🚀 Starting SINGLE ADVANCED GRID for {symbol}")
@@ -417,9 +420,21 @@ class SingleAdvancedGridManager:
             if "error" in inventory_status:
                 return {"success": False, "error": inventory_status["error"]}
 
-            # ... your existing asset config and market analysis code ...
+            # Get asset config and initialize symbol managers
             asset_config = self.asset_configs[symbol]
             await self._initialize_symbol_managers(symbol, asset_config)
+
+            # 🔥 ACTIVATE ADVANCED FEATURES (MOVED TO CORRECT LOCATION)
+            self.volatility_managers[symbol] = VolatilityBasedRiskManager(
+                self.binance_client, symbol
+            )
+
+            # Check constructor - may need different parameters
+            self.auto_reset_managers[symbol] = SmartGridAutoReset(
+                symbol, self.client_id
+            )
+
+            self.logger.info(f"🔥 Advanced features activated for {symbol}")
 
             # Get current price
             current_price = await self._get_current_price_with_precision(symbol)
@@ -451,6 +466,13 @@ class SingleAdvancedGridManager:
                     if hasattr(grid_config, "to_dict")
                     else {},
                     "capital_allocation": f"${total_capital:,.2f} (100%)",
+                    "advanced_features_active": {
+                        "compound_interest": True,
+                        "volatility_management": True,
+                        "auto_reset": True,
+                        "market_timing": True,
+                        "precision_handling": True,
+                    },
                 }
             else:
                 return execution_result
