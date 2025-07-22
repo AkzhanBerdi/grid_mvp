@@ -28,6 +28,7 @@ from models.client import GridStatus
 from repositories.client_repository import ClientRepository
 from services.fifo_service import FIFOService
 from services.single_advanced_grid_manager import SingleAdvancedGridManager
+from services.telegram_notifier import TelegramNotifier
 from utils.crypto import CryptoUtils
 
 try:
