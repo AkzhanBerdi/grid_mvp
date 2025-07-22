@@ -1622,7 +1622,7 @@ class SingleAdvancedGridManager:
         except Exception as e:
             self.logger.error(f"❌ Order replacement error for {symbol}: {e}")
 
-            await self.grid_integration.on_api_error(
+            await self.working_integration.on_api_error(
                 error_code=str(getattr(e, "code", "UNKNOWN")),
                 error_message=str(e),
                 symbol=symbol,
@@ -1739,7 +1739,7 @@ class SingleAdvancedGridManager:
         except Exception as e:
             self.logger.error(f"❌ Create replacement sell order error: {e}")
 
-            await self.grid_integration.on_api_error(
+            await self.working_integration.on_api_error(
                 error_code=str(getattr(e, "code", "UNKNOWN")),
                 error_message=str(e),
                 symbol=symbol,
@@ -1852,7 +1852,7 @@ class SingleAdvancedGridManager:
                         self.logger.error(
                             f"❌ Failed to place replacement BUY order: {e}"
                         )
-                        await self.grid_integration.on_api_error(
+                        await self.working_integration.on_api_error(
                             error_code=str(getattr(e, "code", "UNKNOWN")),
                             error_message=str(e),
                             symbol=symbol,
@@ -1868,7 +1868,7 @@ class SingleAdvancedGridManager:
         except Exception as e:
             self.logger.error(f"❌ Create replacement buy order error: {e}")
 
-            await self.grid_integration.on_api_error(
+            await self.working_integration.on_api_error(
                 error_code=str(getattr(e, "code", "UNKNOWN")),
                 error_message=str(e),
                 symbol=symbol,
