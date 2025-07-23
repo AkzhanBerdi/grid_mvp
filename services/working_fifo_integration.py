@@ -5,6 +5,7 @@ Uses FIFOProfitCalculator directly for accurate results
 FIXED: Includes on_api_error method that grid_integration was trying to call
 """
 
+import asyncio
 import logging
 from datetime import datetime
 
@@ -17,9 +18,13 @@ class WorkingFIFOIntegration:
 
     def __init__(self, client_id: int):
         self.client_id = client_id
-        self.calculator = FIFOProfitCalculator()  # Use working calculator
-        self.telegram = TelegramNotifier()  # Use existing telegram notifier
+        self.calculator = FIFOProfitCalculator()
+        self.telegram = TelegramNotifier()
         self.logger = logging.getLogger(__name__)
+
+        # ✅ YOU ALREADY HAVE THIS - GOOD!
+        self.startup_mode = True  # Suppress messages during startup
+        asyncio.get_event_loop().call_later(60, self._disable_startup_mode)
 
         # Milestone tracking
         self.milestones_reached = set()
@@ -28,12 +33,24 @@ class WorkingFIFOIntegration:
         self.error_count = 0
         self.last_error_time = 0
 
+    def _disable_startup_mode(self):
+        """Disable startup mode to allow normal notifications"""
+        self.startup_mode = False
+
     async def on_order_filled(
         self, symbol: str, side: str, quantity: float, price: float, level: int = None
     ):
-        """Perfect order fill handler with working FIFO data"""
+        """Perfect order fill handler with working FIFO data - WITH STARTUP SUPPRESSION"""
+
+        # ✅ ADD: Skip notifications during startup
+        if self.startup_mode:
+            self.logger.debug(
+                f"🔇 Suppressed order fill notification during startup: {symbol} {side}"
+            )
+            return True  # Return success but don't send notification
+
         try:
-            # Get profit from working calculator
+            # YOUR EXISTING CODE - KEEP AS IS
             performance = self.calculator.calculate_fifo_profit(self.client_id)
             total_profit = performance.get("total_profit", 0)
 
@@ -90,24 +107,33 @@ Value: ${order_value:.2f}"""
         operation: str = "unknown",
         severity: str = "ERROR",
     ):
-        """
-        🚨 API Error Notification Handler
-        This is the method that grid_integration was trying to call!
-        """
+        """API Error Notification Handler - WITH STARTUP SUPPRESSION"""
+
+        # ✅ ADD: Reduce API error spam during startup
+        if self.startup_mode:
+            # During startup, only log critical errors, don't send Telegram
+            if severity == "CRITICAL":
+                self.logger.error(
+                    f"🚨 CRITICAL API Error during startup: {error_code} - {error_message}"
+                )
+            else:
+                self.logger.debug(
+                    f"🔇 API Error suppressed during startup: {error_code}"
+                )
+            return True
+
+        # YOUR EXISTING CODE - KEEP AS IS
         try:
-            # Track error frequency
             current_time = datetime.now().timestamp()
             self.error_count += 1
             self.last_error_time = current_time
 
-            # Get current profit for context
             try:
                 performance = self.calculator.calculate_fifo_profit(self.client_id)
                 total_profit = performance.get("total_profit", 0)
             except:
                 total_profit = 0
 
-            # Determine severity emoji
             severity_emoji = {
                 "CRITICAL": "🚨",
                 "ERROR": "❌",
@@ -115,7 +141,6 @@ Value: ${order_value:.2f}"""
                 "INFO": "ℹ️",
             }.get(severity, "❌")
 
-            # Create comprehensive error message
             message = f"""{severity_emoji} API ERROR DETECTED
 
 🔍 Operation: {operation}
@@ -129,7 +154,6 @@ Value: ${order_value:.2f}"""
 
 🔄 System will retry automatically"""
 
-            # Add context for common errors
             if "insufficient balance" in error_message.lower():
                 message += (
                     "\n\n💡 Note: Insufficient balance - normal during rapid trading"
@@ -139,7 +163,6 @@ Value: ${order_value:.2f}"""
             elif "notional" in error_message.lower():
                 message += "\n\n💡 Note: Order value too small - minimum $5 required"
 
-            # Send error notification
             success = await self.telegram.send_message(message)
 
             if success:
@@ -147,11 +170,9 @@ Value: ${order_value:.2f}"""
             else:
                 self.logger.error("❌ Failed to send API error notification")
 
-            # Log for debugging
             self.logger.error(
                 f"API Error - {operation}: {error_code} - {error_message}"
             )
-
             return success
 
         except Exception as e:
@@ -192,37 +213,44 @@ Value: ${order_value:.2f}"""
     async def on_grid_setup_status(
         self, symbol: str, orders_placed: int, failed_orders: int, success_rate: str
     ):
-        """Notify grid setup status"""
+        """Notify grid setup status - WITH STARTUP SUPPRESSION"""
+
+        # ✅ ADD: Skip grid setup notifications during startup
+        if self.startup_mode:
+            self.logger.info(
+                f"🔇 Grid setup completed during startup: {symbol} - {orders_placed} orders placed"
+            )
+            return  # Don't send Telegram notification during startup
+
+        # ✅ ADD: Only notify for substantial grids (avoid spam for small grids)
+        if orders_placed < 8:
+            self.logger.debug(
+                f"🔇 Skipped notification for small grid: {symbol} - {orders_placed} orders"
+            )
+            return
+
         try:
             if failed_orders == 0:
-                # Perfect setup
-                message = f"""✅ GRID SETUP COMPLETE
-
-📊 Symbol: {symbol}
-🎯 Orders Placed: {orders_placed}
-📈 Success Rate: {success_rate}
-
-🚀 Grid is active and trading!"""
+                # Perfect setup - SEND CLEAN MESSAGE
+                message = f"""🚀 Single Advanced Grid Started
+📊 {symbol}
+📈 Orders: {orders_placed}
+⚡ Efficiency: 100%
+⏰ {datetime.now().strftime("%H:%M:%S")}"""
 
             elif orders_placed > 0:
                 # Partial setup
                 message = f"""⚠️ GRID SETUP PARTIAL
-
-📊 Symbol: {symbol}
-✅ Orders Placed: {orders_placed}
-❌ Failed Orders: {failed_orders}
-📈 Success Rate: {success_rate}
-
-🔄 Grid is operational but not complete"""
+📊 {symbol}
+✅ Orders: {orders_placed}
+❌ Failed: {failed_orders}
+📈 Rate: {success_rate}"""
 
             else:
                 # Failed setup
                 message = f"""🚨 GRID SETUP FAILED
-
-📊 Symbol: {symbol}
+📊 {symbol}
 ❌ All {failed_orders} orders failed
-📈 Success Rate: {success_rate}
-
 🔧 Check API keys and balance"""
 
             await self.telegram.send_message(message)

@@ -28,25 +28,28 @@ class BaseClientHandler:
     # SHARED CORE METHODS
 
     async def setup_api_keys(self, query, client_id: int):
-        """API key setup with Home button"""
+        """Unified API key setup - used by both handlers"""
+        # Clear any existing state
+        if client_id in self.client_states:
+            del self.client_states[client_id]
+
+        # Set state for API key input
         self.client_states[client_id] = {"step": "waiting_api_key"}
 
         message = """🔐 **Binance API Setup**
 
-    **Step 1:** Send your Binance API Key
+**Step 1:** Send your Binance API Key
 
-    **How to get your API keys:**
-    1. Go to Binance.com → Profile → API Management
-    2. Create new API key with these permissions:
-    ✅ Enable Spot Trading
-    ❌ DO NOT enable withdrawals
-    3. Copy and send your API Key below
+**How to get your API keys:**
+1. Go to Binance.com → Profile → API Management
+2. Create new API key with these permissions:
+✅ Enable Spot Trading
+❌ DO NOT enable withdrawals
+3. Copy and send your API Key below
 
-    **Security:** Your keys are encrypted and used only for trading."""
+**Security:** Your keys are encrypted and used only for trading."""
 
-        keyboard = [
-            [InlineKeyboardButton("🏠 Home", callback_data="home")]
-        ]  # ✅ CHANGED
+        keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_input")]]
 
         await query.edit_message_text(
             message,
@@ -55,9 +58,10 @@ class BaseClientHandler:
         )
 
     async def show_settings(self, query, client_id: int):
-        """Settings with Home button"""
+        """Unified settings display - used by both handlers"""
         client = self.client_repo.get_client(client_id)
 
+        # FIXED: Use actual Client model attributes
         has_api_keys = bool(client.binance_api_key and client.binance_secret_key)
         api_status = "✅ Connected" if has_api_keys else "❌ Not Set"
         capital_status = (
@@ -68,11 +72,12 @@ class BaseClientHandler:
 
         message = f"""⚙️ **Account Settings**
 
-    **API Connection:** {api_status}
-    **Trading Capital:** {capital_status}
-    **Risk Level:** {client.risk_level.title()}
+**API Connection:** {api_status}
+**Trading Capital:** {capital_status}
+**Risk Level:** {client.risk_level.title()}
+**Trading Pairs:** {", ".join(client.trading_pairs) if client.trading_pairs else "Not Set"}
 
-    **Account Status:** {"✅ Ready" if client.can_start_grid() else "❌ Setup Required"}"""
+**Account Status:** {"✅ Ready" if client.can_start_grid() else "❌ Setup Required"}"""
 
         keyboard = []
 
@@ -86,17 +91,15 @@ class BaseClientHandler:
                 [InlineKeyboardButton("💰 Set Capital", callback_data="set_capital")]
             )
 
-        keyboard.append(
-            [InlineKeyboardButton("🏠 Home", callback_data="home")]
-        )  # ✅ CHANGED
+        keyboard.extend(
+            [[InlineKeyboardButton("📊 Dashboard", callback_data="show_dashboard")]]
+        )
 
         await query.edit_message_text(
             message,
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown",
         )
-
-    # ALTERNATIVE SIMPLER FIX - if you want to just handle the specific error:
 
     async def show_base_dashboard(
         self,
@@ -105,21 +108,16 @@ class BaseClientHandler:
         extra_buttons: Optional[List[List[InlineKeyboardButton]]] = None,
     ):
         """
-        SIMPLE FIX: Just handle the coroutine error gracefully
+        Core dashboard logic with customizable buttons - FIXED VERSION
+        Eliminates duplicate dashboard code
         """
         try:
-            # Try to get grid status, handle both async and sync cases
-            grid_status = None
-            try:
-                grid_status = await self.grid_orchestrator.get_client_grid_status(
-                    client.telegram_id
-                )
-            except Exception as grid_error:
-                self.logger.warning(f"Grid status error: {grid_error}")
-                # Continue without grid status
-                grid_status = {"active_grids": {}}
+            # FIXED: Remove await since get_client_grid_status() is not async
+            grid_status = self.grid_orchestrator.get_client_grid_status(
+                client.telegram_id
+            )
 
-            # Rest of your existing code stays the same...
+            # FIXED: Use actual Client model attributes
             has_api_keys = bool(client.binance_api_key and client.binance_secret_key)
             api_status = "✅ Connected" if has_api_keys else "❌ Not Set"
 
@@ -128,26 +126,59 @@ class BaseClientHandler:
             if grid_status and grid_status.get("active_grids"):
                 active_grids = grid_status["active_grids"]
                 active_info = f"\n🤖 Active Grids: {len(active_grids)}"
+                for symbol, grid_info in active_grids.items():
+                    status = grid_info.get("status", "Unknown")
+                    active_info += f"\n   {symbol}: {status}"
             else:
                 active_info = "\n💤 No active grids"
 
             message = f"""📊 **GridTrader Pro Dashboard**
 
-    **Account Status:**
-    🔐 API Keys: {api_status}
-    💰 Capital: ${client.total_capital:,.2f}{active_info}
+**Account Status:**
+🔐 API Keys: {api_status}
+💰 Capital: ${client.total_capital:,.2f}
+⚙️ Pairs: {", ".join(client.trading_pairs) if client.trading_pairs else "Not Set"}
+📈 Risk Level: {client.risk_level.title()}{active_info}
 
-    **Quick Trading:** Type `ADA 1000` or `ETH 500`"""
+**Quick Trading:** Type `ADA 1000` or `AVAX 500`"""
 
-            # Build simple keyboard
-            keyboard = [
-                [InlineKeyboardButton("⚙️ Settings", callback_data="show_settings")],
-                [
-                    InlineKeyboardButton(
-                        "📈 Performance", callback_data="show_performance"
+            # Build keyboard
+            keyboard = []
+
+            # Add trading controls
+            if client.can_start_grid():
+                if grid_status and grid_status.get("active_grids"):
+                    keyboard.append(
+                        [
+                            InlineKeyboardButton(
+                                "🛑 Stop Trading", callback_data="stop_all_grids"
+                            )
+                        ]
                     )
-                ],
-            ]
+                else:
+                    keyboard.append(
+                        [
+                            InlineKeyboardButton(
+                                "🚀 Start Trading", callback_data="start_trading"
+                            )
+                        ]
+                    )
+
+            # Add extra buttons if provided (smart features, etc.)
+            if extra_buttons:
+                keyboard.extend(extra_buttons)
+
+            # Add standard buttons
+            keyboard.extend(
+                [
+                    [InlineKeyboardButton("⚙️ Settings", callback_data="show_settings")],
+                    [
+                        InlineKeyboardButton(
+                            "📈 Performance", callback_data="show_performance"
+                        )
+                    ],
+                ]
+            )
 
             # Send message
             if hasattr(update, "message") and update.message:
@@ -165,21 +196,15 @@ class BaseClientHandler:
 
         except Exception as e:
             self.logger.error(f"Error showing dashboard: {e}")
-            # Simple fallback message
-            fallback_message = """📊 **Dashboard**
-            
-    Use quick commands: `ADA 1000` or `ETH 500`"""
+            error_message = "❌ Dashboard temporarily unavailable. Please try again."
 
-            try:
-                if hasattr(update, "message") and update.message:
-                    await update.message.reply_text(fallback_message)
-                else:
-                    await update.edit_message_text(fallback_message)
-            except:
-                pass  # Give up gracefully
+            if hasattr(update, "message") and update.message:
+                await update.message.reply_text(error_message)
+            else:
+                await update.edit_message_text(error_message)
 
     async def stop_all_grids(self, query, client_id: int):
-        """Unified grid stopping - with Home button"""
+        """Unified grid stopping - used by both handlers"""
         await query.edit_message_text("🔄 **Stopping all grids...**")
 
         result = await self.grid_orchestrator.stop_all_client_grids(client_id)
@@ -188,21 +213,22 @@ class BaseClientHandler:
             grids_stopped = result.get("grids_stopped", 0)
             message = f"""🛑 **All Grids Stopped**
 
-    ✅ Successfully stopped {grids_stopped} grid(s)
-    ✅ All orders cancelled
-    ✅ Positions secured
+✅ Successfully stopped {grids_stopped} grid(s)
+✅ All orders cancelled
+✅ {result.get("orders_cancelled", 0)} orders processed
+✅ Positions secured
 
-    Your account is now in safe mode."""
+Your account is now in safe mode."""
         else:
             message = f"""❌ **Error Stopping Grids**
 
-    Some grids may still be active.
-    Error: {result.get("error", "Unknown error")}
+Some grids may still be active.
+Error: {result.get("error", "Unknown error")}
 
-    Please check manually or contact support."""
+Please check manually or contact support."""
 
         keyboard = [
-            [InlineKeyboardButton("🏠 Home", callback_data="home")]  # ✅ CHANGED
+            [InlineKeyboardButton("📊 Dashboard", callback_data="show_dashboard")]
         ]
 
         await query.edit_message_text(
@@ -263,51 +289,12 @@ Enter your total trading capital in USD.
         elif action == "cancel_input":
             await self.cancel_input(query, client_id)
             return True
-        elif action == "show_dashboard" or action == "home":
-            # Go back to personalized /start instead of generic dashboard
-            await self.go_home(query, client_id)
+        elif action == "show_dashboard":
+            client = self.client_repo.get_client(client_id)
+            await self.show_base_dashboard(query, client)
             return True
 
         return False  # Action not handled, let specific handler deal with it
-
-    async def go_home(self, query, client_id: int):
-        """Super simple home - just edit the current message"""
-        try:
-            client = self.client_repo.get_client(client_id)
-
-            has_api_keys = bool(client.binance_api_key and client.binance_secret_key)
-            setup_status = (
-                "✅ Ready"
-                if (has_api_keys and client.total_capital > 0)
-                else "⚙️ Setup Required"
-            )
-
-            message = f"""🏠 **GridTrader Pro Home**
-
-    **Status:** {setup_status}
-    **Capital:** ${client.total_capital:,.2f}
-
-    **Quick Commands:**
-    `ETH 1000` • `SOL 800` • `ADA 600`"""
-
-            keyboard = [
-                [InlineKeyboardButton("⚙️ Settings", callback_data="show_settings")],
-                [
-                    InlineKeyboardButton(
-                        "📈 Performance", callback_data="show_performance"
-                    )
-                ],
-            ]
-
-            await query.edit_message_text(
-                message,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode="Markdown",
-            )
-
-        except Exception as e:
-            self.logger.error(f"Error going home: {e}")
-            await query.edit_message_text("🏠 Home\n\nUse: `ETH 1000` or `ADA 800`")
 
     async def handle_common_messages(self, update, context, text: str) -> bool:
         """

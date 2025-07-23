@@ -4,6 +4,7 @@
 
 import logging
 import sqlite3
+from datetime import datetime
 from typing import Dict, List
 
 from config import Config
@@ -238,6 +239,45 @@ class TradeRepository:
         except Exception as e:
             self.logger.error(f"Error getting symbol performance: {e}")
             return {}
+
+    async def create_trade(
+        self,
+        client_id: int,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float,
+        total_value: float,
+        executed_at: float,
+        is_initialization: bool = False,
+    ) -> str:
+        """Enhanced trade creation with initialization flag"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO trades 
+                    (client_id, symbol, side, quantity, price, total_value, executed_at, is_initialization)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                    (
+                        client_id,
+                        symbol,
+                        side,
+                        quantity,
+                        price,
+                        total_value,
+                        datetime.fromtimestamp(executed_at),
+                        is_initialization,
+                    ),
+                )
+
+                trade_id = cursor.lastrowid
+                return str(trade_id)
+
+        except Exception as e:
+            self.logger.error(f"Error creating trade: {e}")
+            raise
 
 
 # repositories/__init__.py

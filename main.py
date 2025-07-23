@@ -17,6 +17,7 @@ from telegram.ext import (
 from config import Config
 from database.db_setup import DatabaseSetup
 from handlers.client_handler import ClientHandler
+from services.enhanced_fifo_service import EnhancedFIFOService
 from services.fifo_service import FIFOService
 from services.grid_orchestrator import GridOrchestrator
 from services.telegram_notifier import TelegramNotifier
@@ -39,7 +40,14 @@ class GridTradingService:
         self.network_recovery = EnhancedNetworkRecovery()
         self.fifo_service = FIFOService()
         self.fifo_monitoring_service = FIFOMonitoringService()
+        # Add enhanced FIFO service
+        self.enhanced_fifo = EnhancedFIFOService()
+        # Add pure USDT grid initializer
+        # Initialize repositories
+        # if not hasattr(self, "trade_repo"):
+        #     from repositories.enhanced_trade_repository import EnhancedTradeRepository
 
+        #     self.trade_repo = EnhancedTradeRepository()
         # Error tracking
         self._error_count = 0
         self._last_successful_update = datetime.now()
@@ -476,27 +484,28 @@ class GridTradingService:
             raise
 
     async def _init_fifo_monitoring(self):
-        """Initialize FIFO monitoring for existing clients"""
+        """Initialize FIFO monitoring for existing clients WITHOUT duplicate messages"""
         try:
-            # Get all active clients
             with sqlite3.connect(self.config.DATABASE_PATH) as conn:
                 cursor = conn.execute(
                     "SELECT telegram_id FROM clients WHERE status = 'active'"
                 )
                 active_clients = [row[0] for row in cursor.fetchall()]
 
-            # Initialize FIFO monitoring using the existing FIFOService
+            # Initialize monitoring silently during startup
             for client_id in active_clients:
-                self.fifo_service.calculate_fifo_performance(client_id)
-
-                # Initialize Telegram monitoring for each client
                 await self.fifo_monitoring_service.add_client_monitor(client_id)
 
             self.logger.info(
                 f"✅ FIFO monitoring initialized for {len(active_clients)} clients"
             )
-            self.logger.info(
-                f"✅ Telegram FIFO notifications enabled for {len(active_clients)} clients"
+
+            # ✅ SCHEDULE consolidated startup message for after startup completes
+            asyncio.get_event_loop().call_later(
+                65,  # 5 seconds after startup suppression ends
+                lambda: asyncio.create_task(
+                    self.fifo_monitoring_service.send_consolidated_startup_status()
+                ),
             )
 
         except Exception as e:
@@ -559,23 +568,13 @@ class GridTradingService:
             return {"error": str(e)}
 
     async def send_service_startup_notification(self):
-        """Send service startup notification"""
+        """Send SINGLE consolidated service startup notification"""
         try:
-            # Try to import telegram notifier
-            try:
-                from services.telegram_notifier import TelegramNotifier
+            from services.telegram_notifier import TelegramNotifier
 
-                notifier = TelegramNotifier()
-            except ImportError:
-                self.logger.warning(
-                    "Telegram notifier not available, skipping startup notification"
-                )
-                return
+            notifier = TelegramNotifier()
 
             if not notifier.enabled:
-                self.logger.debug(
-                    "Telegram notifier disabled, skipping startup notification"
-                )
                 return
 
             # Get active clients count
@@ -585,21 +584,13 @@ class GridTradingService:
                 )
                 active_clients = cursor.fetchone()[0]
 
-            # Get network health
-            health_status = self.network_recovery.get_health_status()
-
-            startup_message = f"""🚀 **GridTrader Pro Service STARTED**
-
-**⚡ System Status:** OPERATIONAL
-**🔗 Network Health:** {health_status.get("status", "UNKNOWN")}
-**👥 Active Clients:** {active_clients}
-**📱 Telegram Bot:** {"✅ ENABLED" if self.telegram_app else "❌ DISABLED"}
-**📊 FIFO Monitoring:** ✅ ACTIVE
-**🛡️ Network Recovery:** ✅ ENHANCED
-
-**🕐 Started:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}
-
-🤖 **Ready to manage client grids and capture profits!**"""
+            # Send ONE consolidated startup message
+            startup_message = f"""🚀 GridTrader Pro Started
+    ⚡ System: OPERATIONAL
+    👥 Clients: {active_clients}
+    📱 Bot: ✅ ENABLED
+    🕐 {datetime.now().strftime("%H:%M:%S")}
+    🤖 Ready for trading!"""
 
             await notifier.send_message(startup_message)
             self.logger.info("✅ Service startup notification sent")

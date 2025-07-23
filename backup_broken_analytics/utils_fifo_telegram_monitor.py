@@ -4,7 +4,6 @@ Focused FIFO Profit Telegram Monitor for GridTrader Pro
 Integrates with existing database and trade execution flow
 """
 
-import asyncio
 import logging
 import sqlite3
 import time
@@ -214,9 +213,6 @@ class TelegramNotifier:
             return False
 
 
-# utils/fifo_telegram_monitor.py - FINAL FIX for duplicate messages
-
-
 class FIFOProfitMonitor:
     """Main FIFO profit monitoring and notification system"""
 
@@ -227,7 +223,7 @@ class FIFOProfitMonitor:
         self.logger = logging.getLogger(__name__)
 
         # Milestone tracking
-        self.profit_milestones = [100, 250, 500, 1000, 2000, 5000]
+        self.profit_milestones = [10, 25, 50, 100, 250, 500, 1000, 2000, 5000]
         self.last_milestone_reached = 0.0
 
         # Rate limiting
@@ -239,21 +235,10 @@ class FIFOProfitMonitor:
         self.trade_count_on_startup = 0
         self.startup_profit = 0.0
 
-        # ✅ ADD: Startup message control
-        self.startup_message_sent = False
-        self.startup_mode = True
-
-        # Disable startup mode after 60 seconds
-        asyncio.get_event_loop().call_later(60, self._disable_startup_mode)
-
         self.logger.info(f"🔍 FIFO Profit Monitor initialized for client {client_id}")
 
-    def _disable_startup_mode(self):
-        """Disable startup mode"""
-        self.startup_mode = False
-
     async def initialize(self):
-        """Initialize monitor with current stats AND send startup message"""
+        """Initialize monitor with current stats"""
         try:
             current_stats = self.calculator.calculate_fifo_profit(self.client_id)
             self.startup_profit = current_stats["total_profit"]
@@ -265,82 +250,164 @@ class FIFOProfitMonitor:
                     self.last_milestone_reached = milestone
                     break
 
-            # Send startup status message
             await self.send_startup_status()
 
         except Exception as e:
             self.logger.error(f"Error initializing monitor: {e}")
 
-    async def initialize_silently(self):
-        """Initialize monitor WITHOUT sending startup message"""
-        try:
-            current_stats = self.calculator.calculate_fifo_profit(self.client_id)
-            self.startup_profit = current_stats["total_profit"]
-            self.trade_count_on_startup = current_stats["completed_cycles"]
-
-            # Set last milestone to highest reached
-            for milestone in reversed(self.profit_milestones):
-                if current_stats["total_profit"] >= milestone:
-                    self.last_milestone_reached = milestone
-                    break
-
-            # ✅ NO startup message sent - silent initialization
-            self.startup_message_sent = (
-                True  # Mark as sent to prevent future duplicates
-            )
-
-        except Exception as e:
-            self.logger.error(f"Error initializing monitor silently: {e}")
-
     async def send_startup_status(self):
-        """Send bot startup status with current profit - ONCE ONLY"""
-
-        # ✅ PREVENT DUPLICATE: Check if already sent
-        if self.startup_message_sent:
-            self.logger.debug(
-                f"Startup message already sent for client {self.client_id}"
-            )
-            return
-
+        """Send bot startup status with current profit"""
         try:
             stats = self.calculator.calculate_fifo_profit(self.client_id)
             recent = self.calculator.get_recent_profit(self.client_id, 24)
 
-            message = f"""🚀 GridTrader Pro Started
-💰 Current FIFO Profit: ${stats["total_profit"]:.2f}
+            message = f"""🚀 **GridTrader Pro Started**
+
+💰 **Current FIFO Profit: ${stats["total_profit"]:.2f}**
 🔄 Completed Cycles: {stats["completed_cycles"]}
 📈 Win Rate: {stats["win_rate"]:.1f}%
 📊 Avg Profit/Trade: ${stats["avg_profit_per_trade"]:.2f}
-📅 24h Performance:
+
+📅 **24h Performance:**
 💵 Recent Profit: ${recent["recent_profit"]:.2f}
 🔄 Recent Trades: {recent["recent_trades"]}
+
 🎯 Next milestone: ${self._get_next_milestone(stats["total_profit"]):.0f}
+
 ✅ Ready to capture more profits!"""
 
-            if await self.notifier.send_message(message):
-                self.logger.info(f"✅ Startup status sent for client {self.client_id}")
-                self.startup_message_sent = True  # ✅ Mark as sent
+            await self.notifier.send_message(message)
 
         except Exception as e:
             self.logger.error(f"Error sending startup status: {e}")
 
+    async def on_trade_executed(
+        self, symbol: str, side: str, quantity: float, price: float
+    ):
+        """Called when a trade is executed - check for profit updates"""
+        try:
+            if side != "SELL":
+                return  # Only process sell trades for profit calculation
+
+            # Calculate current profit
+            current_stats = self.calculator.calculate_fifo_profit(self.client_id)
+
+            # Check for new milestones
+            await self._check_profit_milestones(current_stats)
+
+            # Check for significant individual trade profit
+            estimated_trade_profit = quantity * price * 0.025  # Assume 2.5% profit
+            if estimated_trade_profit >= 1.0:  # $1+ profit
+                await self._notify_significant_trade(
+                    symbol, estimated_trade_profit, current_stats
+                )
+
+        except Exception as e:
+            self.logger.error(f"Error processing trade execution: {e}")
+
+    async def _check_profit_milestones(self, current_stats: Dict):
+        """Check and notify profit milestones"""
+        try:
+            total_profit = current_stats["total_profit"]
+
+            # Check for new milestones
+            for milestone in self.profit_milestones:
+                if total_profit >= milestone > self.last_milestone_reached:
+                    await self._notify_milestone_reached(milestone, current_stats)
+                    self.last_milestone_reached = milestone
+
+        except Exception as e:
+            self.logger.error(f"Error checking milestones: {e}")
+
+    async def _notify_milestone_reached(self, milestone: float, stats: Dict):
+        """Notify when a profit milestone is reached"""
+        try:
+            next_milestone = self._get_next_milestone(milestone)
+
+            message = f"""🎉 **PROFIT MILESTONE REACHED!**
+
+💰 **${milestone:.0f} Total FIFO Profit Achieved!**
+
+📊 **Current Stats:**
+• Total Profit: **${stats["total_profit"]:.2f}**
+• Completed Cycles: {stats["completed_cycles"]}
+• Win Rate: {stats["win_rate"]:.1f}%
+• Average per Trade: ${stats["avg_profit_per_trade"]:.2f}
+• Profit Margin: {stats["profit_margin"]:.3f}%
+
+🎯 **Next Target:** ${next_milestone:.0f}
+
+🚀 Keep the momentum going! 💪"""
+
+            await self.notifier.send_message(message)
+
+        except Exception as e:
+            self.logger.error(f"Error notifying milestone: {e}")
+
+    async def _notify_significant_trade(
+        self, symbol: str, profit: float, current_stats: Dict
+    ):
+        """Notify significant individual trades"""
+        try:
+            if profit < 1.0:  # Only notify $1+ trades
+                return
+
+            message = f"""💰 **Profitable Trade Completed**
+
+🎯 **{symbol}** • Profit: **${profit:.2f}**
+📈 Total FIFO Profit: **${current_stats["total_profit"]:.2f}**
+📊 Win Rate: {current_stats["win_rate"]:.1f}%
+
+⏰ {datetime.now().strftime("%H:%M:%S")}"""
+
+            await self.notifier.send_message(message)
+
+        except Exception as e:
+            self.logger.error(f"Error notifying trade: {e}")
+
+    def _get_next_milestone(self, current_profit: float) -> float:
+        """Get next profit milestone"""
+        for milestone in self.profit_milestones:
+            if milestone > current_profit:
+                return milestone
+        return current_profit * 2  # Double if beyond predefined milestones
+
+    async def send_daily_summary(self):
+        """Send daily profit summary"""
+        try:
+            today = datetime.now().date()
+
+            if self.last_daily_summary == today:
+                return  # Already sent today
+
+            stats = self.calculator.calculate_fifo_profit(self.client_id)
+            recent_24h = self.calculator.get_recent_profit(self.client_id, 24)
+
+            message = f"""📊 **Daily FIFO Profit Report**
+
+**📅 {today.strftime("%Y-%m-%d")}**
+
+**24H Performance:**
+💵 Daily Profit: **${recent_24h["recent_profit"]:.2f}**
+🔄 Trades Completed: {recent_24h["recent_trades"]}
+
+**Overall FIFO Stats:**
+💰 Total Profit: **${stats["total_profit"]:.2f}**
+📈 Completed Cycles: {stats["completed_cycles"]}
+📊 Win Rate: {stats["win_rate"]:.1f}%
+💵 Avg per Trade: ${stats["avg_profit_per_trade"]:.2f}
+📈 Profit Margin: {stats["profit_margin"]:.3f}%
+
+🎯 Next milestone: ${self._get_next_milestone(stats["total_profit"]):.0f}"""
+
+            await self.notifier.send_message(message)
+            self.last_daily_summary = today
+
+        except Exception as e:
+            self.logger.error(f"Error sending daily summary: {e}")
+
     async def send_profit_update(self, force: bool = False):
-        """Send current profit status (rate limited) - WITH STARTUP PROTECTION"""
-
-        # ✅ PREVENT DUPLICATE: Don't send profit update during startup
-        if self.startup_mode and not force:
-            self.logger.debug(
-                f"Profit update suppressed during startup for client {self.client_id}"
-            )
-            return
-
-        # ✅ PREVENT DUPLICATE: Don't send if startup message not sent yet
-        if not self.startup_message_sent and not force:
-            self.logger.debug(
-                f"Profit update delayed - startup message not sent yet for client {self.client_id}"
-            )
-            return
-
+        """Send current profit status (rate limited)"""
         try:
             now = time.time()
 
@@ -354,18 +421,18 @@ class FIFOProfitMonitor:
             session_profit = stats["total_profit"] - self.startup_profit
             session_trades = stats["completed_cycles"] - self.trade_count_on_startup
 
-            message = f"""📈 Current FIFO Profit Status
+            message = f"""📈 **Current FIFO Profit Status**
 
-💰 Total Profit: ${stats["total_profit"]:.2f}
+💰 **Total Profit: ${stats["total_profit"]:.2f}**
 🔄 Completed Cycles: {stats["completed_cycles"]}
 📊 Win Rate: {stats["win_rate"]:.1f}%
 💵 Avg per Trade: ${stats["avg_profit_per_trade"]:.2f}
 
-Session Stats:
+**Session Stats:**
 📈 Session Profit: ${session_profit:.2f}
 🔄 Session Trades: {session_trades}
 
-24H Stats:
+**24H Stats:**
 💵 Recent Profit: ${recent_24h["recent_profit"]:.2f}
 🔄 Recent Trades: {recent_24h["recent_trades"]}
 
@@ -377,133 +444,103 @@ Session Stats:
         except Exception as e:
             self.logger.error(f"Error sending profit update: {e}")
 
-    def _get_next_milestone(self, current_profit: float) -> float:
-        """✅ MISSING METHOD: Get next profit milestone"""
-        for milestone in self.profit_milestones:
-            if milestone > current_profit:
-                return milestone
-        return current_profit * 2  # Double if beyond predefined milestones
+    async def periodic_check(self):
+        """Periodic monitoring tasks"""
+        try:
+            current_hour = datetime.now().hour
+
+            # Send daily summary at 9 AM
+            if current_hour == 9:
+                await self.send_daily_summary()
+
+            # Check for significant daily profit
+            recent_24h = self.calculator.get_recent_profit(self.client_id, 24)
+            if recent_24h["recent_profit"] >= 10.0:  # $10+ daily profit
+                await self._notify_excellent_daily_performance(recent_24h)
+
+        except Exception as e:
+            self.logger.error(f"Error in periodic check: {e}")
+
+    async def _notify_excellent_daily_performance(self, recent_stats: Dict):
+        """Notify excellent daily performance"""
+        try:
+            message = f"""🔥 **Excellent Daily Performance!**
+
+💵 24H Profit: **${recent_stats["recent_profit"]:.2f}**
+🔄 Trades: {recent_stats["recent_trades"]}
+
+Outstanding grid trading performance today! 🚀"""
+
+            await self.notifier.send_message(message)
+
+        except Exception as e:
+            self.logger.error(f"Error notifying daily performance: {e}")
+
+    async def notify_error(self, error_msg: str):
+        """Notify errors with profit context"""
+        try:
+            stats = self.calculator.calculate_fifo_profit(self.client_id)
+
+            message = f"""❌ **Trading Error Detected**
+
+🚨 Error: {error_msg[:100]}...
+
+💰 Current Profit: **${stats["total_profit"]:.2f}**
+🔄 Completed Cycles: {stats["completed_cycles"]}
+
+Bot will retry automatically."""
+
+            await self.notifier.send_message(message)
+
+        except Exception as e:
+            self.logger.error(f"Error notifying error: {e}")
 
 
-# UPDATE the FIFOMonitoringService to be more robust:
-
-
+# Integration helper for your existing codebase
 class FIFOMonitoringService:
     """Service to integrate FIFO monitoring into your existing system"""
 
     def __init__(self):
         self.monitors: Dict[int, FIFOProfitMonitor] = {}
         self.logger = logging.getLogger(__name__)
-        self.startup_in_progress = True
-        self.clients_initialized = set()
-
-        # Track which clients have sent startup messages
-        self.startup_messages_sent = set()
-
-        asyncio.get_event_loop().call_later(60, self._disable_startup_suppression)
-
-    def _disable_startup_suppression(self):
-        """Disable startup message suppression after service is fully loaded"""
-        self.startup_in_progress = False
-        self.logger.info("📱 FIFO notifications now active")
 
     async def add_client_monitor(self, client_id: int):
-        """Add monitoring for a client WITHOUT sending duplicate startup messages"""
+        """Add monitoring for a client"""
         try:
             if client_id not in self.monitors:
                 monitor = FIFOProfitMonitor(client_id)
-
-                if self.startup_in_progress:
-                    # ✅ ALWAYS use silent initialization during startup
-                    await monitor.initialize_silently()
-                    self.clients_initialized.add(client_id)
-                    self.logger.info(
-                        f"✅ Added FIFO monitoring for client {client_id} (silent)"
-                    )
-                else:
-                    # Normal initialization with startup message
-                    if client_id not in self.startup_messages_sent:
-                        await monitor.initialize()
-                        self.startup_messages_sent.add(client_id)
-                        self.logger.info(
-                            f"✅ Added FIFO monitoring for client {client_id} (with message)"
-                        )
-                    else:
-                        await monitor.initialize_silently()
-                        self.logger.info(
-                            f"✅ Added FIFO monitoring for client {client_id} (already messaged)"
-                        )
-
+                await monitor.initialize()
                 self.monitors[client_id] = monitor
-
+                self.logger.info(f"✅ Added FIFO monitoring for client {client_id}")
         except Exception as e:
             self.logger.error(f"Error adding monitor for client {client_id}: {e}")
 
-    async def send_consolidated_startup_status(self):
-        """Send ONE consolidated startup message for ALL clients after startup"""
-        if self.startup_in_progress:
-            return
-
+    async def on_trade_executed(
+        self, client_id: int, symbol: str, side: str, quantity: float, price: float
+    ):
+        """Call this from your trade execution logic"""
         try:
-            if not self.monitors:
-                return
-
-            # ✅ ONLY send if no individual startup messages were sent
-            if self.startup_messages_sent:
-                self.logger.info(
-                    "Individual startup messages already sent, skipping consolidated message"
+            if client_id in self.monitors:
+                await self.monitors[client_id].on_trade_executed(
+                    symbol, side, quantity, price
                 )
-                return
-
-            # Get total stats across all clients
-            total_profit = 0
-            total_cycles = 0
-            active_clients = len(self.monitors)
-
-            for monitor in self.monitors.values():
-                try:
-                    stats = monitor.calculator.calculate_fifo_profit(monitor.client_id)
-                    total_profit += stats.get("total_profit", 0)
-                    total_cycles += stats.get("completed_cycles", 0)
-                except:
-                    continue
-
-            # Send ONE consolidated message
-            message = f"""📊 FIFO Monitoring Active
-👥 Clients: {active_clients}
-💰 Total Profit: ${total_profit:.2f}
-🔄 Total Cycles: {total_cycles}
-✅ Ready to track profits!"""
-
-            # Send to first monitor (they all use same telegram notifier)
-            if self.monitors:
-                first_monitor = next(iter(self.monitors.values()))
-                await first_monitor.notifier.send_message(message)
-
         except Exception as e:
-            self.logger.error(f"Error sending consolidated startup status: {e}")
+            self.logger.error(f"Error processing trade for client {client_id}: {e}")
 
     async def send_profit_status(self, client_id: int):
         """Manual profit status request"""
         try:
             if client_id in self.monitors:
                 await self.monitors[client_id].send_profit_update(force=True)
-            else:
-                self.logger.warning(f"⚠️ No monitor found for client {client_id}")
         except Exception as e:
             self.logger.error(
                 f"Error sending profit status for client {client_id}: {e}"
             )
 
-
-# SUMMARY OF FINAL FIXES:
-# 1. ✅ Added startup_message_sent flag to prevent duplicate startup messages
-# 2. ✅ Added startup_mode protection to send_profit_update()
-# 3. ✅ Track which clients already sent startup messages
-# 4. ✅ Always use silent initialization during startup
-# 5. ✅ Prevent profit updates before startup message is sent
-
-# RESULT:
-# - Only ONE startup message per client
-# - No profit updates during startup period
-# - Clean, professional user experience
+    async def periodic_monitoring(self):
+        """Run periodic monitoring tasks"""
+        try:
+            for monitor in self.monitors.values():
+                await monitor.periodic_check()
+        except Exception as e:
+            self.logger.error(f"Error in periodic monitoring: {e}")

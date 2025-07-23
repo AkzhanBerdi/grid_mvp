@@ -59,12 +59,7 @@ class Client:
 
     def can_start_grid(self) -> bool:
         """Check if client can start grid trading"""
-        return (
-            self.is_active()
-            and self.binance_api_key
-            and self.binance_secret_key
-            and self.total_capital > 0
-        )
+        return self.is_active() and self.binance_api_key and self.binance_secret_key
 
     def get_order_size_per_pair(self) -> float:
         """Calculate order size per trading pair"""
@@ -76,4 +71,3 @@ class Client:
             self.order_size,
             self.total_capital / (len(self.trading_pairs) * self.grid_levels),
         )
-

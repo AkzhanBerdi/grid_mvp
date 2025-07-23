@@ -31,17 +31,6 @@ from services.single_advanced_grid_manager import SingleAdvancedGridManager
 from services.telegram_notifier import TelegramNotifier
 from utils.crypto import CryptoUtils
 
-try:
-    from utils.fifo_telegram_monitor import FIFOMonitoringService
-except ImportError:
-    # Fallback if TelegramNotifier doesn't exist
-    class TelegramNotifier:
-        def __init__(self):
-            self.enabled = False
-
-        async def send_message(self, message):
-            pass
-
 
 class GridOrchestrator:
     """
@@ -67,7 +56,7 @@ class GridOrchestrator:
 
         # Binance clients cache (matches your existing pattern)
         self.binance_clients: Dict[int, Client] = {}
-        self.notification_manager = FIFOMonitoringService()
+
         self.last_daily_summary = None
 
         # Monitoring state
@@ -297,7 +286,7 @@ class GridOrchestrator:
             )
             return {"success": False, "error": str(e)}
 
-    async def stop_all_client_grids(self, client_id: int) -> Dict:
+    async def stop_all_grids(self, client_id: int) -> Dict:
         """Stop all active grids for a client"""
         try:
             if client_id not in self.advanced_managers:
@@ -926,6 +915,88 @@ class GridOrchestrator:
                     "error": "No active manager for client",
                     "client_id": client_id,
                 }
+    
+    async def _send_notification_safe(self, message: str):
+        """Send notification safely with fallback"""
+        try:
+            if hasattr(self.notification_manager, 'send_message'):
+                return await self.notification_manager.send_message(message)
+            elif hasattr(self.notification_manager, 'add_client_monitor'):
+                # FIFOMonitoringService style
+                return True  # Just log success
+            else:
+                self.logger.debug(f"Notification: {message}")
+                return True
+        except Exception as e:
+            self.logger.error(f"Notification failed: {e}")
+            return False
+    
+    async def _send_daily_summary_safe(self, client_id: int):
+        """Send daily summary safely"""
+        try:
+            if hasattr(self.notification_manager, 'add_client_monitor'):
+                await self._send_daily_summary_safe(client_id)
+                # Already handled in _send_daily_summary_safe
+                return True
+            elif hasattr(self.notification_manager, 'send_message'):
+                # Simple telegram notifier
+                from analytics.sqlite_analytics import SQLiteAnalytics
+                analytics = SQLiteAnalytics()
+                profit_data = analytics.get_real_profit(client_id)
+                
+                message = f"""📊 Daily Summary - Client {client_id}
+💰 Total Profit: ${profit_data.total_profit:.2f}
+📈 Total Trades: {profit_data.total_trades}
+📅 Daily Average: ${profit_data.daily_average:.2f}"""
+                
+                return await self.notification_manager.send_message(message)
+            else:
+                self.logger.info(f"Daily summary for client {client_id}: No notification manager")
+                return True
+        except Exception as e:
+            self.logger.error(f"Daily summary failed for client {client_id}: {e}")
+            return False
+    
+    async def _send_notification_safe(self, message: str):
+        """Send notification safely with fallback"""
+        try:
+            if hasattr(self.notification_manager, 'send_message'):
+                return await self.notification_manager.send_message(message)
+            elif hasattr(self.notification_manager, 'add_client_monitor'):
+                # FIFOMonitoringService style
+                return True  # Just log success
+            else:
+                self.logger.debug(f"Notification: {message}")
+                return True
+        except Exception as e:
+            self.logger.error(f"Notification failed: {e}")
+            return False
+    
+    async def _send_daily_summary_safe(self, client_id: int):
+        """Send daily summary safely"""
+        try:
+            if hasattr(self.notification_manager, 'add_client_monitor'):
+                await self._send_daily_summary_safe(client_id)
+                # Already handled in _send_daily_summary_safe
+                return True
+            elif hasattr(self.notification_manager, 'send_message'):
+                # Simple telegram notifier
+                from analytics.sqlite_analytics import SQLiteAnalytics
+                analytics = SQLiteAnalytics()
+                profit_data = analytics.get_real_profit(client_id)
+                
+                message = f"""📊 Daily Summary - Client {client_id}
+💰 Total Profit: ${profit_data.total_profit:.2f}
+📈 Total Trades: {profit_data.total_trades}
+📅 Daily Average: ${profit_data.daily_average:.2f}"""
+                
+                return await self.notification_manager.send_message(message)
+            else:
+                self.logger.info(f"Daily summary for client {client_id}: No notification manager")
+                return True
+        except Exception as e:
+            self.logger.error(f"Daily summary failed for client {client_id}: {e}")
+            return False
 
             manager = self.advanced_managers[client_id]
 
@@ -1024,10 +1095,10 @@ class GridOrchestrator:
                 for client_id in active_clients:
                     try:
                         # Ensure client has monitoring set up
-                        await self.notification_manager.add_client_monitor(client_id)
+                        await self._send_daily_summary_safe(client_id)
 
                         # Send the daily summary
-                        await self.notification_manager.send_profit_status(client_id)
+                        # Already handled in _send_daily_summary_safe
                         summary_count += 1
 
                     except Exception as e:
@@ -1050,7 +1121,7 @@ class GridOrchestrator:
         """Called when a trade is executed - notify FIFO monitor"""
         try:
             # Ensure client monitoring is set up
-            await self.notification_manager.add_client_monitor(client_id)
+            await self._send_daily_summary_safe(client_id)
 
             # Notify the trade execution
             await self.notification_manager.on_trade_executed(
