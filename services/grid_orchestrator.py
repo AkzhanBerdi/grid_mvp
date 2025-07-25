@@ -26,7 +26,7 @@ from binance.client import Client
 from config import Config
 from models.client import GridStatus
 from repositories.client_repository import ClientRepository
-from services.fifo_service import FIFOService
+from services.enhanced_fifo_service import EnhancedFIFOService
 from services.single_advanced_grid_manager import SingleAdvancedGridManager
 from services.telegram_notifier import TelegramNotifier
 from utils.crypto import CryptoUtils
@@ -82,7 +82,7 @@ class GridOrchestrator:
             "system_uptime_start": time.time(),
             "last_optimization": 0,
         }
-        self.fifo_service = FIFOService()
+        self.fifo_service = EnhancedFIFOService()
         self.last_daily_summary = None
 
         self.logger.info(

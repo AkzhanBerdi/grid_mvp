@@ -282,9 +282,8 @@ class TradeRepository:
 
 # repositories/__init__.py
 """Repositories package initialization"""
-
-from services.performance_calculator import FixedTradeRepository
-
 from .client_repository import ClientRepository
+from .enhanced_trade_repository import EnhancedTradeRepository
+from .trade_repository import TradeRepository
 
-__all__ = ["ClientRepository", "FixedTradeRepository"]
+__all__ = ["ClientRepository", "TradeRepository", "EnhancedTradeRepository"]

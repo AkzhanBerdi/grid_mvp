@@ -18,7 +18,6 @@ from config import Config
 from database.db_setup import DatabaseSetup
 from handlers.client_handler import ClientHandler
 from services.enhanced_fifo_service import EnhancedFIFOService
-from services.fifo_service import FIFOService
 from services.grid_orchestrator import GridOrchestrator
 from services.telegram_notifier import TelegramNotifier
 from utils.fifo_telegram_monitor import FIFOMonitoringService
@@ -38,17 +37,9 @@ class GridTradingService:
         self.grid_orchestrator = GridOrchestrator()
         self.handler = ClientHandler()
         self.network_recovery = EnhancedNetworkRecovery()
-        self.fifo_service = FIFOService()
         self.fifo_monitoring_service = FIFOMonitoringService()
         # Add enhanced FIFO service
         self.enhanced_fifo = EnhancedFIFOService()
-        # Add pure USDT grid initializer
-        # Initialize repositories
-        # if not hasattr(self, "trade_repo"):
-        #     from repositories.enhanced_trade_repository import EnhancedTradeRepository
-
-        #     self.trade_repo = EnhancedTradeRepository()
-        # Error tracking
         self._error_count = 0
         self._last_successful_update = datetime.now()
         self.last_health_check = datetime.now()
@@ -466,7 +457,7 @@ class GridTradingService:
             self._init_database()
             await self._startup_checks()
 
-            if self.fifo_service:
+            if self.enhanced_fifo:
                 await self._init_fifo_monitoring()
 
             self.setup_telegram_bot()

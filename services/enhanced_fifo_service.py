@@ -7,12 +7,15 @@ Adds support for recording initial cost basis from pure USDT initialization
 Ensures perfect profit tracking from the first trade
 """
 
+import asyncio
 import logging
 import sqlite3
 import time
+from datetime import datetime
 from typing import Dict, List, Optional
 
 from config import Config
+from services.telegram_notifier import TelegramNotifier
 
 
 class EnhancedFIFOService:
@@ -22,9 +25,33 @@ class EnhancedFIFOService:
     """
 
     def __init__(self, db_path: Optional[str] = None):
+        # Your existing __init__ code...
         self.db_path = db_path or Config.DATABASE_PATH
         self.logger = logging.getLogger(__name__)
-        self._init_cost_basis_table()
+
+        # Add notification support
+        try:
+            self.telegram = TelegramNotifier()
+            self.notifications_enabled = self.telegram.enabled
+        except ImportError:
+            self.notifications_enabled = False
+            self.logger.warning("Telegram notifications not available")
+
+        # Add startup suppression (prevents spam during service startup)
+        self.startup_mode = True
+        asyncio.get_event_loop().call_later(60, self._disable_startup_mode)
+
+        # Milestone tracking for profit notifications
+        self.milestones_reached = set()
+
+        # Error tracking
+        self.error_count = 0
+        self.last_error_time = 0
+
+    def _disable_startup_mode(self):
+        """Disable startup mode to allow normal notifications"""
+        self.startup_mode = False
+        self.logger.info("📢 FIFO notifications enabled (startup suppression ended)")
 
     def _init_cost_basis_table(self):
         """Initialize cost basis tracking table"""
@@ -533,7 +560,514 @@ class EnhancedFIFOService:
                 "recommendations": ["Contact support for FIFO validation assistance"],
             }
 
+    def log_trade(
+        self,
+        client_id: int,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float,
+        order_id: str,
+    ) -> bool:
+        """Compatibility method for legacy FIFOService.log_trade()"""
+        # Delegate to your existing trade logging method
+        return self.record_trade_execution(
+            client_id, symbol, side, quantity, price, order_id
+        )
 
+    def get_client_performance(self, client_id: int) -> Dict:
+        """Compatibility method for legacy performance calls"""
+        return self.calculate_fifo_profit_with_cost_basis(client_id)
+
+    async def on_order_filled(
+        self,
+        client_id: int,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float,
+        order_id: str = None,
+        level: int = None,
+    ) -> bool:
+        """
+        Handle order fill with FIFO tracking and notifications
+        This replaces the working_fifo_integration.on_order_filled method
+        """
+        try:
+            # Skip notifications during startup to prevent spam
+            if self.startup_mode:
+                self.logger.debug(
+                    f"🔇 Suppressed order fill notification during startup: {symbol} {side}"
+                )
+                # Still record the trade, just don't send notification
+                await self._record_trade_quietly(
+                    client_id, symbol, side, quantity, price, order_id
+                )
+                return True
+
+            # Record the trade in FIFO system
+            trade_recorded = await self._record_trade_with_fifo(
+                client_id, symbol, side, quantity, price, order_id
+            )
+
+            if not trade_recorded:
+                self.logger.error("❌ Failed to record trade in FIFO system")
+                return False
+
+            # Calculate current profit using FIFO
+            profit_data = self.calculate_fifo_profit_with_cost_basis(client_id)
+            total_profit = profit_data.get("total_profit", 0)
+
+            # Format notification message
+            order_value = quantity * price
+            profit_estimate = 0
+            if side == "SELL":
+                profit_estimate = order_value * 0.025  # Rough estimate
+
+            # Smart quantity formatting (ADA vs others)
+            if symbol == "ADAUSDT":
+                qty_str = f"{quantity:.1f}"
+            else:
+                qty_str = f"{quantity:.4f}"
+
+            message = f"""{symbol} {side} ORDER FILLED
+
+Amount: {qty_str} @ ${price:.4f}
+Value: ${order_value:.2f}"""
+
+            if level:
+                message += f"\nLevel: {level}"
+
+            if profit_estimate > 0:
+                message += f"\nEstimated Profit: ${profit_estimate:.2f}"
+
+            message += f"\nTotal Profit: ${total_profit:.2f}"
+            message += f"\nTime: {datetime.now().strftime('%H:%M:%S')}"
+
+            # Send notification if enabled
+            success = True
+            if self.notifications_enabled:
+                success = await self.telegram.send_message(message)
+
+            # Check for profit milestones
+            if side == "SELL" and success:
+                await self._check_profit_milestones(client_id, total_profit)
+
+            if success:
+                self.logger.info(
+                    f"✅ Order fill processed: {symbol} {side} @ ${price:.4f}"
+                )
+
+            return success
+
+        except Exception as e:
+            self.logger.error(f"❌ Error in on_order_filled: {e}")
+            return False
+
+    # ========================================================================
+    # METHOD 2: on_api_error - Essential for error handling
+    # ========================================================================
+    async def on_api_error(
+        self,
+        client_id: int,
+        error_code: str,
+        error_message: str,
+        symbol: str = None,
+        operation: str = "unknown",
+        severity: str = "ERROR",
+    ) -> bool:
+        """
+        Handle API errors with intelligent notifications
+        This replaces the working_fifo_integration.on_api_error method
+        """
+        try:
+            # Reduce spam during startup - only critical errors
+            if self.startup_mode:
+                if severity == "CRITICAL":
+                    self.logger.error(
+                        f"🚨 CRITICAL API Error during startup: {error_code} - {error_message}"
+                    )
+                else:
+                    self.logger.debug(
+                        f"🔇 API Error suppressed during startup: {error_code}"
+                    )
+                return True
+
+            # Track error
+            current_time = datetime.now().timestamp()
+            self.error_count += 1
+            self.last_error_time = current_time
+
+            # Get current profit for context
+            try:
+                profit_data = self.calculate_fifo_profit_with_cost_basis(client_id)
+                total_profit = profit_data.get("total_profit", 0)
+            except:
+                total_profit = 0
+
+            # Choose emoji based on severity
+            severity_emoji = {
+                "CRITICAL": "🚨",
+                "ERROR": "❌",
+                "WARNING": "⚠️",
+                "INFO": "ℹ️",
+            }.get(severity, "❌")
+
+            # Create error message
+            message = f"""{severity_emoji} API ERROR DETECTED
+
+🔍 Operation: {operation}
+📊 Symbol: {symbol or "Unknown"}
+🏷️ Error Code: {error_code}
+📝 Message: {error_message[:100]}...
+
+💰 Current Profit: ${total_profit:.2f}
+👤 Client: {client_id}
+🕐 Time: {datetime.now().strftime("%H:%M:%S")}
+
+🔄 System will retry automatically"""
+
+            # Add helpful context for common errors
+            if "insufficient balance" in error_message.lower():
+                message += (
+                    "\n\n💡 Note: Insufficient balance - normal during rapid trading"
+                )
+            elif "lot_size" in error_message.lower():
+                message += "\n\n💡 Note: Order size too small - precision issue"
+            elif "notional" in error_message.lower():
+                message += "\n\n💡 Note: Order value too small - minimum $5 required"
+
+            # Send notification if enabled
+            success = True
+            if self.notifications_enabled:
+                success = await self.telegram.send_message(message)
+
+            if success:
+                self.logger.info(f"✅ API error notification sent: {error_code}")
+            else:
+                self.logger.error("❌ Failed to send API error notification")
+
+            # Log the error
+            self.logger.error(
+                f"API Error - {operation}: {error_code} - {error_message}"
+            )
+
+            return success
+
+        except Exception as e:
+            self.logger.error(f"❌ Error in API error handler: {e}")
+            return False
+
+    # ========================================================================
+    # HELPER METHODS
+    # ========================================================================
+
+    async def _record_trade_with_fifo(
+        self,
+        client_id: int,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float,
+        order_id: str = None,
+    ) -> bool:
+        """Record trade in FIFO system"""
+        try:
+            # Use your existing trade recording logic
+            # This should integrate with your cost basis tracking
+
+            # For BUY orders: record as cost basis
+            if side == "BUY":
+                cost_basis_id = await self.record_initial_cost_basis(
+                    client_id=client_id,
+                    symbol=symbol,
+                    quantity=quantity,
+                    cost_per_unit=price,
+                    total_cost=quantity * price,
+                    timestamp=time.time(),
+                    trade_id=order_id or f"trade_{int(time.time())}",
+                )
+                return cost_basis_id is not None
+
+            # For SELL orders: record as trade execution
+            else:
+                # Record in trades table and calculate FIFO profit
+                with sqlite3.connect(self.db_path) as conn:
+                    conn.execute(
+                        """
+                        INSERT INTO trades (
+                            client_id, symbol, side, quantity, price,
+                            total_value, order_id, executed_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    """,
+                        (
+                            client_id,
+                            symbol,
+                            side,
+                            quantity,
+                            price,
+                            quantity * price,
+                            order_id,
+                        ),
+                    )
+                return True
+
+        except Exception as e:
+            self.logger.error(f"❌ Failed to record trade: {e}")
+            return False
+
+    async def _record_trade_quietly(
+        self,
+        client_id: int,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float,
+        order_id: str = None,
+    ):
+        """Record trade without notifications (used during startup)"""
+        try:
+            await self._record_trade_with_fifo(
+                client_id, symbol, side, quantity, price, order_id
+            )
+        except Exception as e:
+            self.logger.error(f"❌ Failed to record trade quietly: {e}")
+
+    async def _check_profit_milestones(self, client_id: int, total_profit: float):
+        """Check and notify about profit milestones"""
+        try:
+            milestones = [25, 50, 100, 250, 500, 1000]
+
+            for milestone in milestones:
+                if (
+                    total_profit >= milestone
+                    and milestone not in self.milestones_reached
+                ):
+                    await self._notify_milestone(client_id, total_profit, milestone)
+                    self.milestones_reached.add(milestone)
+                    break  # Only notify one milestone at a time
+
+        except Exception as e:
+            self.logger.error(f"❌ Error checking milestones: {e}")
+
+    async def _notify_milestone(
+        self, client_id: int, total_profit: float, milestone: int
+    ):
+        """Send milestone notification"""
+        try:
+            if not self.notifications_enabled:
+                return
+
+            message = f"""🎉 PROFIT MILESTONE REACHED!
+
+💰 Total Profit: ${total_profit:.2f}
+🎯 Milestone: ${milestone}
+👤 Client: {client_id}
+🕐 Time: {datetime.now().strftime("%H:%M:%S")}
+
+🚀 Keep up the great trading!"""
+
+            await self.telegram.send_message(message)
+            self.logger.info(f"🎉 Milestone notification sent: ${milestone}")
+
+        except Exception as e:
+            self.logger.error(f"❌ Failed to send milestone notification: {e}")
+
+    # ========================================================================
+    # COMPATIBILITY METHODS (for legacy code)
+    # ========================================================================
+
+    def log_trade(
+        self,
+        client_id: int,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float,
+        order_id: str,
+    ) -> bool:
+        """Legacy compatibility method"""
+        try:
+            # Convert to async call
+            return asyncio.create_task(
+                self._record_trade_with_fifo(
+                    client_id, symbol, side, quantity, price, order_id
+                )
+            )
+        except Exception as e:
+            self.logger.error(f"❌ Legacy log_trade error: {e}")
+            return False
+
+    # Add to EnhancedFIFOService class:
+
+
+    async def notify_api_error(
+        self,
+        error_code: str,
+        error_message: str,
+        symbol: str,
+        operation: str,
+        client_id: int,
+        context: dict = None,
+    ) -> bool:
+        """
+        Consolidated API error notification with FIFO context
+        Replaces APIErrorNotifier.notify_api_error()
+        """
+        try:
+            # Skip during startup to prevent spam
+            if self.startup_mode:
+                if "CRITICAL" in operation.upper():
+                    self.logger.error(
+                        f"🚨 CRITICAL API Error: {error_code} - {error_message}"
+                    )
+                return True
+
+            # Get current profit for context
+            try:
+                profit_data = self.calculate_fifo_profit_with_cost_basis(client_id)
+                total_profit = profit_data.get("total_profit", 0)
+            except:
+                total_profit = 0
+
+            # Determine severity emoji
+            severity_emoji = self._get_error_severity_emoji(error_code)
+
+            # Create comprehensive error message
+            message = f"""{severity_emoji} **API Error Alert**
+
+    **Error Details:**
+    - Code: `{error_code}`
+    - Operation: {operation} {symbol}
+    - Client: {client_id}
+
+    **Message:** {error_message[:150]}...
+
+    **Trading Context:**
+    - Current Profit: ${total_profit:.2f}
+    - Symbol: {symbol}
+    - Time: {datetime.now().strftime("%H:%M:%S")}
+
+    🔄 System will retry automatically"""
+
+            # Add helpful context for common errors
+            if "insufficient balance" in error_message.lower():
+                message += (
+                    "\n\n💡 **Note:** Insufficient balance - normal during rapid trading"
+                )
+            elif "lot_size" in error_message.lower():
+                message += "\n\n💡 **Note:** Order size too small - precision issue"
+            elif "notional" in error_message.lower():
+                message += "\n\n💡 **Note:** Order value too small - minimum $5 required"
+            elif error_code in ["-2014", "-1022"]:
+                message += "\n\n🚨 **CRITICAL:** Authentication issue - check API keys"
+
+            # Send notification
+            success = True
+            if self.notifications_enabled:
+                success = await self.telegram.send_message(message)
+
+            # Log error appropriately
+            if error_code in ["-2014", "-1022", "-1021"]:  # Critical auth errors
+                self.logger.critical(
+                    f"🚨 CRITICAL API Error: {error_code} - {error_message}"
+                )
+            else:
+                self.logger.error(
+                    f"❌ API Error - {operation}: {error_code} - {error_message}"
+                )
+
+            return success
+
+        except Exception as e:
+            self.logger.error(f"❌ Error in API error handler: {e}")
+            return False
+
+
+    async def notify_grid_status(
+        self,
+        symbol: str,
+        client_id: int,
+        orders_placed: int,
+        failed_orders: int,
+        success_rate: float,
+    ) -> bool:
+        """
+        Grid setup status notification with FIFO context
+        Replaces APIErrorNotifier.notify_grid_status()
+        """
+        try:
+            # Skip during startup
+            if self.startup_mode:
+                self.logger.debug(f"🔇 Grid status notification suppressed: {symbol}")
+                return True
+
+            # Get current profit for context
+            try:
+                profit_data = self.calculate_fifo_profit_with_cost_basis(client_id)
+                total_profit = profit_data.get("total_profit", 0)
+            except:
+                total_profit = 0
+
+            # Only notify if there are issues or significant success
+            if failed_orders == 0 and orders_placed > 5:
+                # Perfect setup - brief success message
+                message = f"""✅ **Grid Setup Complete**
+
+    **Symbol:** {symbol}
+    **Orders Placed:** {orders_placed}
+    **Success Rate:** {success_rate:.1f}%
+    **Current Profit:** ${total_profit:.2f}
+
+    🚀 Trading active!"""
+
+            elif failed_orders > 0:
+                # Issues detected - detailed message
+                severity = "🟠" if success_rate >= 50 else "🔴"
+
+                message = f"""{severity} **Grid Setup Alert**
+
+    **Symbol:** {symbol}
+    **Client:** {client_id}
+    **Orders Placed:** {orders_placed}
+    **Failed Orders:** {failed_orders}
+    **Success Rate:** {success_rate:.1f}%
+    **Current Profit:** ${total_profit:.2f}
+
+    **Status:** {"Partial Success" if orders_placed > 0 else "Setup Failed"}
+
+    Check logs for detailed error information."""
+
+            else:
+                return True  # No notification needed
+
+            # Send notification
+            success = True
+            if self.notifications_enabled:
+                success = await self.telegram.send_message(message)
+
+            if success:
+                self.logger.info(f"✅ Grid status notification sent: {symbol}")
+
+            return success
+
+        except Exception as e:
+            self.logger.error(f"❌ Failed to send grid status notification: {e}")
+            return False
+
+
+    def _get_error_severity_emoji(self, error_code: str) -> str:
+        """Get appropriate emoji for error severity"""
+        critical_errors = ["-2014", "-1022", "-1021"]  # Auth/signature issues
+        high_errors = ["-1013", "-2010", "-1003", "-1015"]  # Trading issues
+
+        if error_code in critical_errors:
+            return "🚨"
+        elif error_code in high_errors:
+            return "❌"
+        else:
+            return "⚠️"
+    
 # Integration helper functions
 def create_enhanced_fifo_service(db_path: Optional[str] = None) -> EnhancedFIFOService:
     """Factory function to create enhanced FIFO service"""

@@ -10,7 +10,6 @@ Replaces: EnhancedDualScaleGridManager
 Benefits: 100% capital efficiency, simplified management, maximum feature utilization
 """
 
-import asyncio
 import logging
 import time
 from typing import Dict, Optional
@@ -26,23 +25,20 @@ from services.advanced_trading_features import (
     SmartGridAutoReset,
     VolatilityBasedRiskManager,
 )
-from services.api_error_notifier import APIErrorNotifier
-from services.fifo_service import FIFOService
+from services.enhanced_fifo_service import EnhancedFIFOService
 from services.inventory_manager import SingleGridInventoryManager
 from services.market_analysis import MarketAnalysisService
-from services.working_fifo_integration import WorkingFIFOIntegration
 from utils.fifo_telegram_monitor import FIFOMonitoringService
 
 # Replace the entire compound manager section with this:
 try:
     from services.compound_interest_manager import CompoundInterestManager
-    from services.fifo_service import FIFOService
 
     COMPOUND_AVAILABLE = True
 
     def create_advanced_compound_manager(client_id):
         """Create advanced compound manager with FIFO integration"""
-        fifo_service = FIFOService()
+        fifo_service = EnhancedFIFOService()
         return CompoundInterestManager(fifo_service)
 
 except ImportError:
@@ -78,8 +74,6 @@ class SingleAdvancedGridManager:
         self.client_id = client_id
         self.logger = logging.getLogger(__name__)
 
-        self.error_notifier = APIErrorNotifier()
-
         self.inventory_manager = None  # Will be initialized with capital
         self.volatility_managers: Dict[str, VolatilityBasedRiskManager] = {}
         self.auto_reset_managers: Dict[str, SmartGridAutoReset] = {}
@@ -90,10 +84,9 @@ class SingleAdvancedGridManager:
 
         # Services
         # 🔥 REPLACE: Use working integration instead of the broken one
-        self.working_integration = WorkingFIFOIntegration(client_id)
         self.logger.info("✅ Working notification integration initialized")
         self.logger.info("✅ FIXED Grid notification integration initialized")
-        self.fifo_service = FIFOService()
+        self.fifo_service = EnhancedFIFOService()
         if MARKET_ANALYSIS_AVAILABLE:
             self.market_analysis = MarketAnalysisService(binance_client)
 
@@ -120,7 +113,7 @@ class SingleAdvancedGridManager:
                 "✅ Advanced CompoundInterestManager with Kelly Criterion activated"
             )
         else:
-            self.compound_manager = CompoundInterestManager(FIFOService())
+            self.compound_manager = CompoundInterestManager(EnhancedFIFOService())
             self.logger.warning("⚠️ Using basic compound manager fallback")
         # Initialize advanced feature managers
         self.market_timer = IntelligentMarketTimer()
@@ -337,6 +330,77 @@ class SingleAdvancedGridManager:
 
             self.logger.error(f"Full traceback: {traceback.format_exc()}")
             return {"success": False, "error": str(e)}
+
+    async def _safe_create_grid_config(
+        self, symbol: str, total_capital: float, current_price: float
+    ):
+        """Safely create grid configuration"""
+        try:
+            asset_config = self.asset_configs.get(symbol, {})
+
+            # Create basic grid config
+            from models.single_advanced_grid_config import SingleAdvancedGridConfig
+
+            grid_config = SingleAdvancedGridConfig(symbol, total_capital, asset_config)
+            grid_config.center_price = current_price
+
+            # Calculate basic grid levels
+            spacing = asset_config.get("grid_spacing_base", 0.025)  # 2.5% default
+            grid_config.grid_spacing = spacing
+
+            # Create 5 buy levels and 5 sell levels
+            grid_config.buy_levels = []
+            grid_config.sell_levels = []
+
+            order_size = total_capital / 10  # Divide across 10 levels
+
+            # Buy levels (below current price)
+            for i in range(1, 6):
+                buy_price = current_price * (1 - spacing * i)
+                buy_quantity = order_size / buy_price
+
+                grid_config.buy_levels.append(
+                    {
+                        "level": -i,
+                        "side": "BUY",
+                        "price": buy_price,
+                        "quantity": buy_quantity,
+                        "order_size_usd": order_size,
+                        "filled": False,
+                        "order_id": None,
+                    }
+                )
+
+            # Sell levels (above current price)
+            for i in range(1, 6):
+                sell_price = current_price * (1 + spacing * i)
+                sell_quantity = order_size / sell_price
+
+                grid_config.sell_levels.append(
+                    {
+                        "level": i,
+                        "side": "SELL",
+                        "price": sell_price,
+                        "quantity": sell_quantity,
+                        "order_size_usd": order_size,
+                        "filled": False,
+                        "order_id": None,
+                    }
+                )
+
+            self.logger.info(f"✅ Grid configuration created for {symbol}")
+            self.logger.info(
+                f"   📉 Buy levels: 5 levels from ${grid_config.buy_levels[-1]['price']:.4f} to ${grid_config.buy_levels[0]['price']:.4f}"
+            )
+            self.logger.info(
+                f"   📈 Sell levels: 5 levels from ${grid_config.sell_levels[0]['price']:.4f} to ${grid_config.sell_levels[-1]['price']:.4f}"
+            )
+
+            return grid_config
+
+        except Exception as e:
+            self.logger.error(f"❌ Grid config creation error: {e}")
+            return None
 
     async def _execute_initial_50_50_split(
         self, symbol: str, total_capital: float, current_price: float
@@ -600,190 +664,6 @@ class SingleAdvancedGridManager:
             self.logger.error(f"❌ Advanced managers initialization error: {e}")
             # Don't fail the entire grid for this
 
-    async def _safe_create_grid_config(
-        self, symbol: str, total_capital: float, current_price: float
-    ):
-        """Safely create grid configuration"""
-        try:
-            asset_config = self.asset_configs.get(symbol, {})
-
-            # Create basic grid config
-            from models.single_advanced_grid_config import SingleAdvancedGridConfig
-
-            grid_config = SingleAdvancedGridConfig(symbol, total_capital, asset_config)
-            grid_config.center_price = current_price
-
-            # Calculate basic grid levels
-            spacing = asset_config.get("grid_spacing_base", 0.025)  # 2.5% default
-            grid_config.grid_spacing = spacing
-
-            # Create 5 buy levels and 5 sell levels
-            grid_config.buy_levels = []
-            grid_config.sell_levels = []
-
-            order_size = total_capital / 10  # $80 per order for $800 capital
-
-            # Buy levels (below current price)
-            for i in range(1, 6):
-                buy_price = current_price * (1 - spacing * i)
-                buy_quantity = order_size / buy_price
-
-                grid_config.buy_levels.append(
-                    {
-                        "level": -i,
-                        "side": "BUY",
-                        "price": buy_price,
-                        "quantity": buy_quantity,
-                        "order_size_usd": order_size,
-                    }
-                )
-
-            # Sell levels (above current price)
-            for i in range(1, 6):
-                sell_price = current_price * (1 + spacing * i)
-                sell_quantity = order_size / sell_price
-
-                grid_config.sell_levels.append(
-                    {
-                        "level": i,
-                        "side": "SELL",
-                        "price": sell_price,
-                        "quantity": sell_quantity,
-                        "order_size_usd": order_size,
-                    }
-                )
-
-            self.logger.info(f"✅ Grid configuration created for {symbol}")
-            self.logger.info(
-                f"   📉 Buy levels: 5 levels from ${grid_config.buy_levels[-1]['price']:.4f} to ${grid_config.buy_levels[0]['price']:.4f}"
-            )
-            self.logger.info(
-                f"   📈 Sell levels: 5 levels from ${grid_config.sell_levels[0]['price']:.4f} to ${grid_config.sell_levels[-1]['price']:.4f}"
-            )
-
-            return grid_config
-
-        except Exception as e:
-            self.logger.error(f"❌ Grid config creation error: {e}")
-            return None
-
-    async def _safe_execute_grid_setup(self, symbol: str, grid_config):
-        """Safely execute grid setup with balance checking"""
-        try:
-            orders_placed = 0
-            failed_orders = 0
-
-            self.logger.info(f"🎯 Executing safe grid setup for {symbol}")
-
-            # Get exchange rules
-            rules = await self._get_exchange_rules_simple(symbol)
-            if not rules:
-                return {"success": False, "error": "Could not get exchange rules"}
-
-            # Check actual balances first
-            try:
-                account_info = self.binance_client.get_account()
-                usdt_balance = 0.0
-                asset_balance = 0.0
-                asset_symbol = symbol.replace("USDT", "")
-
-                for balance in account_info["balances"]:
-                    if balance["asset"] == "USDT":
-                        usdt_balance = float(balance["free"])
-                    elif balance["asset"] == asset_symbol:
-                        asset_balance = float(balance["free"])
-
-                self.logger.info(
-                    f"📊 Actual balances: USDT=${usdt_balance:.2f}, {asset_symbol}={asset_balance:.4f}"
-                )
-
-            except Exception as balance_error:
-                self.logger.error(f"❌ Balance check error: {balance_error}")
-                usdt_balance = 0.0
-                asset_balance = 0.0
-
-            # Place BUY orders (if we have USDT)
-            if usdt_balance >= 50:  # Need at least $50 for buys
-                for level in grid_config.buy_levels:
-                    try:
-                        if usdt_balance < 40:  # Skip if running low
-                            break
-
-                        quantity = min(
-                            level["quantity"], (usdt_balance * 0.8) / level["price"]
-                        )
-
-                        self.logger.info(
-                            f"📤 Placing BUY: {quantity:.4f} @ {level['price']:.4f}"
-                        )
-
-                        order = self.binance_client.order_limit_buy(
-                            symbol=symbol,
-                            quantity=f"{quantity:.{rules['quantity_precision']}f}",
-                            price=f"{level['price']:.{rules['price_precision']}f}",
-                        )
-
-                        orders_placed += 1
-                        usdt_balance -= quantity * level["price"]
-
-                        self.logger.info(
-                            f"✅ BUY Level {level['level']}: {order['origQty']} @ ${order['price']}"
-                        )
-
-                    except Exception as e:
-                        failed_orders += 1
-                        self.logger.error(f"❌ BUY Level {level['level']} failed: {e}")
-
-            # Place SELL orders (if we have assets)
-            if asset_balance >= 50:  # Need at least 50 units for sells
-                for level in grid_config.sell_levels:
-                    try:
-                        if asset_balance < 10:  # Skip if running low
-                            break
-
-                        quantity = min(level["quantity"], asset_balance * 0.8)
-
-                        self.logger.info(
-                            f"📤 Placing SELL: {quantity:.4f} @ {level['price']:.4f}"
-                        )
-
-                        order = self.binance_client.order_limit_sell(
-                            symbol=symbol,
-                            quantity=f"{quantity:.{rules['quantity_precision']}f}",
-                            price=f"{level['price']:.{rules['price_precision']}f}",
-                        )
-
-                        orders_placed += 1
-                        asset_balance -= quantity
-
-                        self.logger.info(
-                            f"✅ SELL Level {level['level']}: {order['origQty']} @ ${order['price']}"
-                        )
-
-                    except Exception as e:
-                        failed_orders += 1
-                        self.logger.error(f"❌ SELL Level {level['level']} failed: {e}")
-
-            else:
-                self.logger.info(
-                    f"⚠️ Skipping SELL orders - insufficient {asset_symbol} balance ({asset_balance:.4f})"
-                )
-
-            self.logger.info(
-                f"✅ Grid setup completed: {orders_placed} orders placed, {failed_orders} failed"
-            )
-
-            return {
-                "success": orders_placed > 0,
-                "orders_placed": orders_placed,
-                "failed_orders": failed_orders,
-                "message": f"Grid active with {orders_placed} orders",
-            }
-
-        except Exception as e:
-            self.logger.error(f"❌ Safe grid setup error: {e}")
-            return {"success": False, "error": str(e)}
-
     async def _get_exchange_rules_simple(self, symbol: str) -> Dict:
         """Get basic exchange rules with error handling"""
         try:
@@ -829,327 +709,6 @@ class SingleAdvancedGridManager:
                 "step_size": 0.1,
                 "min_notional": 5.0,
             }
-
-    async def _inventory_aware_monitoring_loop(self, symbol: str):
-        """
-        ADD this new method: Monitoring loop with inventory management
-        """
-        try:
-            while symbol in self.active_grids:
-                # Check for filled orders with inventory updates
-                await self._check_and_replace_filled_orders_with_inventory(symbol)
-
-                # Log inventory status periodically
-                if self._should_log_inventory():
-                    inventory_status = self.inventory_manager.get_inventory_status(
-                        symbol
-                    )
-                    self.logger.info(
-                        f"📊 {symbol} Inventory: USDT Available=${inventory_status['usdt_available']}, Asset Available={inventory_status['asset_available']}"
-                    )
-
-                await asyncio.sleep(30)  # Check every 30 seconds
-
-        except Exception as e:
-            self.logger.error(f"❌ Inventory-aware monitoring error for {symbol}: {e}")
-
-    async def _create_inventory_aware_grid_levels(
-        self, grid_config: SingleAdvancedGridConfig, current_price: float
-    ):
-        """
-        BULLETPROOF: Create grid levels that work for any asset and any amount
-        """
-        try:
-            symbol = grid_config.symbol
-            spacing = grid_config.grid_spacing
-
-            self.logger.info(f"🔧 Creating bulletproof grid levels for {symbol}")
-
-            # Get exchange rules
-            rules = await self._get_exchange_rules_simple(symbol)
-
-            # Make current price valid
-            valid_center_price = self._make_valid_price(
-                current_price, rules["tick_size"], rules["price_precision"]
-            )
-
-            self.logger.info(
-                f"💲 Center price: ${current_price:.8f} → ${valid_center_price:.8f}"
-            )
-
-            # Clear existing levels
-            grid_config.buy_levels = []
-            grid_config.sell_levels = []
-
-            # Calculate order size from total capital
-            total_capital = grid_config.total_capital
-            order_size_usd = total_capital / 10  # 10 orders total
-
-            # Ensure minimum order size
-            min_order_size = max(order_size_usd, rules["min_notional"] * 1.5)
-
-            self.logger.info(f"💰 Order size: ${min_order_size:.2f} per order")
-
-            # Create 5 buy levels
-            for i in range(1, 6):
-                # Calculate price
-                price_multiplier = 1 - (spacing * i)
-                raw_price = valid_center_price * price_multiplier
-                valid_price = self._make_valid_price(
-                    raw_price, rules["tick_size"], rules["price_precision"]
-                )
-
-                # Calculate quantity
-                raw_quantity = min_order_size / valid_price
-                valid_quantity = self._make_valid_quantity(
-                    raw_quantity,
-                    rules["step_size"],
-                    rules["quantity_precision"],
-                    rules["min_qty"],
-                )
-
-                # Recalculate actual USD
-                actual_usd = valid_quantity * valid_price
-
-                buy_level = {
-                    "level": -i,
-                    "side": "BUY",
-                    "price": valid_price,
-                    "quantity": valid_quantity,
-                    "order_size_usd": actual_usd,
-                    "order_id": None,
-                    "filled": False,
-                    "spacing_factor": i,
-                }
-                grid_config.buy_levels.append(buy_level)
-
-            # Create 5 sell levels
-            for i in range(1, 6):
-                # Calculate price
-                price_multiplier = 1 + (spacing * i)
-                raw_price = valid_center_price * price_multiplier
-                valid_price = self._make_valid_price(
-                    raw_price, rules["tick_size"], rules["price_precision"]
-                )
-
-                # Calculate quantity
-                raw_quantity = min_order_size / valid_price
-                valid_quantity = self._make_valid_quantity(
-                    raw_quantity,
-                    rules["step_size"],
-                    rules["quantity_precision"],
-                    rules["min_qty"],
-                )
-
-                # Recalculate actual USD
-                actual_usd = valid_quantity * valid_price
-
-                sell_level = {
-                    "level": i,
-                    "side": "SELL",
-                    "price": valid_price,
-                    "quantity": valid_quantity,
-                    "order_size_usd": actual_usd,
-                    "order_id": None,
-                    "filled": False,
-                    "spacing_factor": i,
-                }
-                grid_config.sell_levels.append(sell_level)
-
-            grid_config.center_price = valid_center_price
-
-            # Log results
-            buy_min = min(level["price"] for level in grid_config.buy_levels)
-            buy_max = max(level["price"] for level in grid_config.buy_levels)
-            sell_min = min(level["price"] for level in grid_config.sell_levels)
-            sell_max = max(level["price"] for level in grid_config.sell_levels)
-
-            self.logger.info(f"✅ Grid levels created for {symbol}:")
-            self.logger.info(
-                f"   📉 Buy levels: 5 levels from ${buy_min:.{rules['price_precision']}f} to ${buy_max:.{rules['price_precision']}f}"
-            )
-            self.logger.info(
-                f"   📈 Sell levels: 5 levels from ${sell_min:.{rules['price_precision']}f} to ${sell_max:.{rules['price_precision']}f}"
-            )
-
-        except Exception as e:
-            self.logger.error(f"❌ Grid level creation error: {e}")
-            raise
-
-    async def _execute_inventory_aware_grid_setup(
-        self, grid_config: SingleAdvancedGridConfig
-    ) -> Dict:
-        """
-        ENHANCED: Execute orders with FIFO trade notifications
-        """
-        try:
-            symbol = grid_config.symbol
-            orders_placed = 0
-            failed_orders = 0
-
-            self.logger.info(f"🎯 Executing bulletproof grid setup for {symbol}")
-
-            # Get exchange rules for formatting
-            rules = await self._get_exchange_rules_simple(symbol)
-
-            # Place BUY orders
-            for level in grid_config.buy_levels:
-                try:
-                    # Format with exact precision
-                    quantity_str = (
-                        f"{level['quantity']:.{rules['quantity_precision']}f}".rstrip(
-                            "0"
-                        ).rstrip(".")
-                    )
-                    price_str = f"{level['price']:.{rules['price_precision']}f}".rstrip(
-                        "0"
-                    ).rstrip(".")
-
-                    # Ensure minimum decimal places
-                    if "." not in quantity_str and rules["quantity_precision"] > 0:
-                        quantity_str += ".0"
-                    if "." not in price_str and rules["price_precision"] > 0:
-                        price_str += ".0"
-
-                    self.logger.info(f"📤 Placing BUY: {quantity_str} @ {price_str}")
-
-                    order = self.binance_client.order_limit_buy(
-                        symbol=symbol,
-                        quantity=quantity_str,
-                        price=price_str,
-                        recvWindow=60000,
-                    )
-
-                    level["order_id"] = order["orderId"]
-                    orders_placed += 1
-
-                    self.logger.info(
-                        f"✅ BUY Level {level['level']}: {order['origQty']} @ ${order['price']}"
-                    )
-
-                    # 🔔 NOTIFY FIFO SYSTEM OF TRADE
-                    await self._notify_trade_execution(symbol, "BUY", order)
-
-                except Exception as e:
-                    failed_orders += 1
-                    self.logger.error(f"❌ BUY Level {level['level']} failed: {e}")
-
-                    # ===== QUICK PATCH: Check actual balance before SELL orders =====
-                    balance_check = self.check_actual_asset_balance(symbol)
-
-                    if not balance_check["sufficient_for_sells"]:
-                        self.logger.info(
-                            f"⚠️ SKIPPING SELL ORDERS - Insufficient {balance_check['asset_symbol']} balance"
-                        )
-                        self.logger.info(
-                            f"   Available: {balance_check['asset_balance']:.4f}"
-                        )
-                        self.logger.info("   Required: ~50+ for viable sell orders")
-                        self.logger.info(
-                            "   Note: Pure USDT FIFO tracking is still ACTIVE!"
-                        )
-
-                        # Skip all sell orders but continue with success
-                        success_rate = (
-                            (orders_placed / (orders_placed + failed_orders) * 100)
-                            if (orders_placed + failed_orders) > 0
-                            else 0
-                        )
-
-                        self.logger.info("✅ Grid setup completed (BUY orders only):")
-                        self.logger.info(f"   🎯 BUY Orders placed: {orders_placed}")
-                        self.logger.info(
-                            "   ⏭️ SELL Orders: Skipped (insufficient balance)"
-                        )
-                        self.logger.info(f"   📊 BUY Success rate: {success_rate:.1f}%")
-                        self.logger.info("   💎 FIFO tracking: ACTIVE")
-
-                        return {
-                            "success": orders_placed > 0,
-                            "orders_placed": orders_placed,
-                            "buy_orders": orders_placed,
-                            "sell_orders": 0,
-                            "failed_orders": failed_orders,
-                            "success_rate": f"{success_rate:.1f}%",
-                            "message": "BUY orders active, SELL orders skipped due to balance",
-                            "fifo_active": True,
-                        }
-                    # ===== END PATCH =====
-
-                    # Place SELL orders (original code continues here)
-                    actual_asset_balance = balance_check["asset_balance"]
-                    sell_order_size = min(
-                        actual_asset_balance
-                        / 5,  # Divide available assets into 5 orders
-                        actual_asset_balance * 0.8,  # Use max 80% of available assets
-                    )
-
-                    self.logger.info(
-                        f"📊 SELL orders will use {sell_order_size:.4f} {balance_check['asset_symbol']} each"
-                    )
-
-                    for level in grid_config.sell_levels:
-                        try:
-                            # Use actual available balance instead of theoretical calculation
-                            adjusted_quantity = min(level["quantity"], sell_order_size)
-
-                            if adjusted_quantity < 1:  # Skip if quantity too small
-                                self.logger.info(
-                                    f"⏭️ Skipping SELL level {level['level']} - quantity too small"
-                                )
-                                continue
-
-                            # Format with exact precision
-                            quantity_str = f"{adjusted_quantity:.{rules['quantity_precision']}f}".rstrip(
-                                "0"
-                            ).rstrip(".")
-                            price_str = (
-                                f"{level['price']:.{rules['price_precision']}f}".rstrip(
-                                    "0"
-                                ).rstrip(".")
-                            )
-
-                            # Ensure minimum decimal places
-                            if (
-                                "." not in quantity_str
-                                and rules["quantity_precision"] > 0
-                            ):
-                                quantity_str += ".0"
-                            if "." not in price_str and rules["price_precision"] > 0:
-                                price_str += ".0"
-
-                            self.logger.info(
-                                f"📤 Placing SELL: {quantity_str} @ {price_str}"
-                            )
-
-                            order = self.binance_client.order_limit_sell(
-                                symbol=symbol,
-                                quantity=quantity_str,
-                                price=price_str,
-                                recvWindow=60000,
-                            )
-
-                            level["order_id"] = order["orderId"]
-                            orders_placed += 1
-
-                            self.logger.info(
-                                f"✅ SELL Level {level['level']}: {order['origQty']} @ ${order['price']}"
-                            )
-
-                            # 🔔 NOTIFY FIFO SYSTEM OF TRADE
-                            await self._notify_trade_execution(symbol, "SELL", order)
-
-                            # Update available balance
-                            actual_asset_balance -= adjusted_quantity
-
-                        except Exception as e:
-                            failed_orders += 1
-                            self.logger.error(
-                                f"❌ SELL Level {level['level']} failed: {e}"
-                            )
-        except Exception as e:
-            self.logger.error(f"❌ Grid setup execution error: {e}")
-            return {"success": False, "error": str(e)}
 
     async def handle_force_command(self, command: str) -> Dict:
         """
@@ -1202,23 +761,6 @@ class SingleAdvancedGridManager:
         except Exception as e:
             self.logger.error(f"❌ Force command error: {e}")
             return {"success": False, "error": str(e)}
-
-    async def _initialize_symbol_managers(self, symbol: str, asset_config: Dict):
-        """Initialize all symbol-specific advanced managers"""
-        try:
-            # Simple, robust initialization
-            self.volatility_managers[symbol] = VolatilityBasedRiskManager(
-                self.binance_client, symbol
-            )
-            self.auto_reset_managers[symbol] = SmartGridAutoReset(
-                symbol, self.client_id
-            )
-
-            self.logger.info(f"🔧 Advanced managers initialized for {symbol}")
-
-        except Exception as e:
-            self.logger.error(f"❌ Manager initialization error for {symbol}: {e}")
-            raise
 
     async def _get_current_price_with_precision(self, symbol: str) -> Optional[float]:
         """Get current price with precision handling"""
@@ -2174,7 +1716,7 @@ class SingleAdvancedGridManager:
                         f"💰 BUY order filled: Level {level['level']} - {level['quantity']:.4f} @ ${level['price']:.2f}"
                     )
                     # 🔥 NEW: Send notification for order fill
-                    await self.working_integration.on_order_filled(
+                    await self.fifo_service.on_order_filled(
                         symbol,
                         "BUY",
                         level["quantity"],
@@ -2214,7 +1756,7 @@ class SingleAdvancedGridManager:
                         f"💰 SELL order filled: Level {level['level']} - {level['quantity']:.4f} @ ${level['price']:.2f}"
                     )
                     # 🔥 NEW: Send notification for order fill
-                    await self.working_integration.on_order_filled(
+                    await self.fifo_service.on_order_filled(
                         symbol,
                         "SELL",
                         level["quantity"],
@@ -2240,7 +1782,7 @@ class SingleAdvancedGridManager:
         except Exception as e:
             self.logger.error(f"❌ Order replacement error for {symbol}: {e}")
 
-            await self.working_integration.on_api_error(
+            await self.fifo_service.on_api_error(
                 error_code=str(getattr(e, "code", "UNKNOWN")),
                 error_message=str(e),
                 symbol=symbol,
@@ -2357,7 +1899,7 @@ class SingleAdvancedGridManager:
         except Exception as e:
             self.logger.error(f"❌ Create replacement sell order error: {e}")
 
-            await self.working_integration.on_api_error(
+            await self.fifo_service.on_api_error(
                 error_code=str(getattr(e, "code", "UNKNOWN")),
                 error_message=str(e),
                 symbol=symbol,
@@ -2470,7 +2012,7 @@ class SingleAdvancedGridManager:
                         self.logger.error(
                             f"❌ Failed to place replacement BUY order: {e}"
                         )
-                        await self.working_integration.on_api_error(
+                        await self.fifo_service.on_api_error(
                             error_code=str(getattr(e, "code", "UNKNOWN")),
                             error_message=str(e),
                             symbol=symbol,
@@ -2486,7 +2028,7 @@ class SingleAdvancedGridManager:
         except Exception as e:
             self.logger.error(f"❌ Create replacement buy order error: {e}")
 
-            await self.working_integration.on_api_error(
+            await self.fifo_service.on_api_error(
                 error_code=str(getattr(e, "code", "UNKNOWN")),
                 error_message=str(e),
                 symbol=symbol,
@@ -2498,26 +2040,6 @@ class SingleAdvancedGridManager:
         import time
 
         return int(time.time()) % 300 == 0
-
-    def get_inventory_status_for_all_grids(self) -> Dict:
-        """
-        ADD this new method: Get inventory status for all active grids
-        """
-        if not self.inventory_manager:
-            return {"error": "Inventory manager not initialized"}
-
-        status = {
-            "total_capital": f"${self.inventory_manager.total_capital:,.2f}",
-            "assets": {},
-            "allocation_reasoning": self.inventory_manager.get_allocation_reasoning(),
-        }
-
-        for symbol in self.active_grids.keys():
-            status["assets"][symbol] = self.inventory_manager.get_inventory_status(
-                symbol
-            )
-
-        return status
 
     # SIMPLE BULLETPROOF FIX: Add this method to your single_advanced_grid_manager.py
 
@@ -2632,116 +2154,6 @@ class SingleAdvancedGridManager:
             return formatted
         except:
             return max(round(quantity, precision), min_qty)
-
-    async def _create_enhanced_sell_order(
-        self, symbol: str, buy_level: Dict, grid_config: SingleAdvancedGridConfig
-    ):
-        """Create enhanced sell order when buy order is filled"""
-        try:
-            # Get current compound multiplier
-            compound_multiplier = self.compound_manager.get_current_multiplier()
-
-            # Calculate sell price with enhanced spacing
-            spacing_multiplier = 1.5  # Enhanced spacing for sells
-            sell_price = buy_level["price"] * (
-                1 + grid_config.grid_spacing * spacing_multiplier
-            )
-
-            # Use same quantity as buy (maintaining coin balance)
-            sell_quantity = buy_level["quantity"]
-
-            # Execute precision sell order
-            order_result = await self.precision_handler.execute_precision_order(
-                symbol, "SELL", sell_quantity, sell_price
-            )
-
-            if order_result["success"]:
-                # Add to sell levels or update existing
-                sell_level = {
-                    "level": abs(buy_level["level"]),
-                    "side": "SELL",
-                    "price": order_result["price"],
-                    "quantity": order_result["quantity"],
-                    "order_id": order_result["order_id"],
-                    "filled": False,
-                    "created_from_buy": buy_level["level"],
-                }
-
-                grid_config.sell_levels.append(sell_level)
-
-                # Log the trade
-                self.trade_repo.log_grid_order(
-                    client_id=self.client_id,
-                    symbol=symbol,
-                    side="SELL",
-                    quantity=order_result["quantity"],
-                    price=order_result["price"],
-                    order_id=order_result["order_id"],
-                    grid_level=sell_level["level"],
-                )
-
-                self.logger.info(
-                    f"✅ Enhanced sell order created: {sell_quantity:.6f} @ ${sell_price:.6f}"
-                )
-
-        except Exception as e:
-            self.logger.error(f"❌ Enhanced sell order creation error: {e}")
-
-    async def _create_enhanced_buy_order(
-        self, symbol: str, sell_level: Dict, grid_config: SingleAdvancedGridConfig
-    ):
-        """Create enhanced buy order when sell order is filled"""
-        try:
-            # Get current compound order size (enhanced by profits)
-            compound_order_size = await self.compound_manager.get_current_order_size(
-                self.client_id, symbol, grid_config.total_capital
-            )
-
-            # Calculate buy price with enhanced spacing
-            spacing_multiplier = 1.5
-            buy_price = sell_level["price"] * (
-                1 - grid_config.grid_spacing * spacing_multiplier
-            )
-
-            # Use compound-enhanced order size
-            buy_quantity = compound_order_size / buy_price
-
-            # Execute precision buy order
-            order_result = await self.precision_handler.execute_precision_order(
-                symbol, "BUY", buy_quantity, buy_price
-            )
-
-            if order_result["success"]:
-                # Add to buy levels or update existing
-                buy_level = {
-                    "level": -abs(sell_level["level"]),
-                    "side": "BUY",
-                    "price": order_result["price"],
-                    "quantity": order_result["quantity"],
-                    "order_id": order_result["order_id"],
-                    "filled": False,
-                    "created_from_sell": sell_level["level"],
-                }
-
-                grid_config.buy_levels.append(buy_level)
-
-                # Log the trade
-                self.trade_repo.log_grid_order(
-                    client_id=self.client_id,
-                    symbol=symbol,
-                    side="BUY",
-                    quantity=order_result["quantity"],
-                    price=order_result["price"],
-                    order_id=order_result["order_id"],
-                    grid_level=buy_level["level"],
-                )
-
-                self.logger.info(
-                    f"✅ Enhanced buy order created: {buy_quantity:.6f} @ ${buy_price:.6f}"
-                )
-
-        except Exception as e:
-            self.logger.error(f"❌ Enhanced buy order creation error: {e}")
 
     async def _update_compound_management(self, symbol: str):
         """Update compound management with latest performance"""
