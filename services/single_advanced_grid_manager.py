@@ -26,6 +26,9 @@ from services.advanced_trading_features import (
     VolatilityBasedRiskManager,
 )
 from services.enhanced_fifo_service import EnhancedFIFOService
+from services.grid_monitoring_service import GridMonitoringService
+
+# Grid decomposition classes
 from services.grid_utility_service import GridUtilityService
 from services.inventory_manager import SingleGridInventoryManager
 from services.market_analysis import MarketAnalysisService
@@ -83,8 +86,9 @@ class SingleAdvancedGridManager:
         self.client_repo = ClientRepository()
         self.trade_repo = TradeRepository()
 
+        # Grid decomposition starts here
         self.utility = GridUtilityService(self.binance_client)
-
+        self.monitoring = GridMonitoringService(self.client_id, self.binance_client)
         # Services
         # 🔥 REPLACE: Use working integration instead of the broken one
         self.logger.info("✅ Working notification integration initialized")
@@ -1100,81 +1104,6 @@ class SingleAdvancedGridManager:
             self.logger.error(f"❌ Grid setup execution error: {e}")
             return {"success": False, "error": str(e)}
 
-    def get_single_grid_status(self, symbol: str) -> Dict:
-        """Get comprehensive status for single advanced grid"""
-        if symbol not in self.active_grids:
-            return {"active": False, "error": "Grid not found"}
-
-        try:
-            grid_config = self.active_grids[symbol]
-
-            # Get advanced features status
-            compound_status = self.compound_manager.get_compound_status()
-            market_session = self.market_timer.get_session_info()
-
-            # Get volatility status
-            volatility_status = {}
-            if symbol in self.volatility_managers:
-                volatility_status = {
-                    "regime": grid_config.volatility_regime,
-                    "active": True,
-                    "current_threshold": self.asset_configs[symbol][
-                        "volatility_threshold"
-                    ],
-                }
-
-            # Get auto-reset status
-            auto_reset_status = {}
-            if symbol in self.auto_reset_managers:
-                auto_reset_status = self.auto_reset_managers[symbol].get_reset_status()
-
-            return {
-                "active": True,
-                "symbol": symbol,
-                "strategy": "Single Advanced Grid (10 levels)",
-                "capital_efficiency": "100%",
-                "grid_details": {
-                    "total_levels": 10,
-                    "buy_levels": len(grid_config.buy_levels),
-                    "sell_levels": len(grid_config.sell_levels),
-                    "center_price": grid_config.center_price,
-                    "current_spacing": f"{grid_config.grid_spacing * 100:.2f}%",
-                },
-                "advanced_features_status": {
-                    "compound_management": {
-                        "active": compound_status["compound_active"],
-                        "current_multiplier": compound_status["current_multiplier"],
-                        "order_size": compound_status["current_order_size"],
-                    },
-                    "market_timing": {
-                        "session": market_session["session_recommendation"],
-                        "intensity": market_session["trading_intensity"],
-                        "should_trade": market_session["should_place_orders"],
-                    },
-                    "volatility_management": volatility_status,
-                    "auto_reset": {
-                        "active": symbol in self.auto_reset_managers,
-                        "can_reset": auto_reset_status.get("can_reset_now", False),
-                        "resets_today": auto_reset_status.get("resets_today", 0),
-                    },
-                    "precision_handling": {
-                        "active": True,
-                        "orders_processed": self.metrics["precision_orders"],
-                    },
-                },
-                "performance_metrics": {
-                    "optimization_events": self.metrics["grid_optimizations"],
-                    "compound_events": self.metrics["compound_events"],
-                    "volatility_adjustments": self.metrics["volatility_adjustments"],
-                    "auto_resets": self.metrics["auto_resets"],
-                },
-                "asset_config": self.asset_configs[symbol],
-            }
-
-        except Exception as e:
-            self.logger.error(f"❌ Status error for {symbol}: {e}")
-            return {"active": False, "error": str(e)}
-
     async def stop_single_advanced_grid(self, symbol: str) -> Dict:
         """Stop single advanced grid and generate final report"""
         if symbol not in self.active_grids:
@@ -1237,263 +1166,31 @@ class SingleAdvancedGridManager:
             self.logger.error(f"❌ Grid stop error for {symbol}: {e}")
             return {"success": False, "error": str(e)}
 
-    def get_all_active_grids(self) -> Dict:
-        """Get status of all active single advanced grids"""
-        all_grids = {}
-
-        for symbol in self.active_grids:
-            try:
-                grid_status = self.get_single_grid_status(symbol)
-                if grid_status.get("active"):
-                    all_grids[symbol] = grid_status
-            except Exception as e:
-                self.logger.error(f"❌ Failed to get status for {symbol}: {e}")
-
-        return {
-            "total_active_grids": len(all_grids),
-            "trading_mode": "Single Advanced Grid with 100% Feature Utilization",
-            "grids": all_grids,
-            "global_metrics": self.metrics,
-            "system_efficiency": "Maximized - No dual-grid overhead",
-        }
-
-    async def get_unified_performance_report(self) -> Dict:
-        """Generate comprehensive performance report for all active grids"""
-        try:
-            performance_data = {
-                "report_type": "Single Advanced Grid Performance Report",
-                "timestamp": time.time(),
-                "total_active_grids": len(self.active_grids),
-                "system_efficiency": "100% - Unified Architecture",
-                "global_metrics": {
-                    "total_optimizations": self.metrics["grid_optimizations"],
-                    "compound_events": self.metrics["compound_events"],
-                    "volatility_adjustments": self.metrics["volatility_adjustments"],
-                    "auto_resets": self.metrics["auto_resets"],
-                    "precision_orders": self.metrics["precision_orders"],
-                    "kelly_adjustments": self.metrics["kelly_adjustments"],
-                },
-                "grid_summaries": {},
-                "feature_utilization": {
-                    "compound_management": "100% - Full capital allocation",
-                    "volatility_management": "100% - Unified grid adjustment",
-                    "market_timing": "100% - Single optimization path",
-                    "auto_reset": "100% - Simplified reset logic",
-                    "precision_handling": "100% - Single execution path",
-                    "kelly_criterion": "100% - Unified position sizing",
-                },
-            }
-
-            # Add individual grid performance
-            for symbol, grid_config in self.active_grids.items():
-                try:
-                    grid_performance = await self._calculate_grid_performance(
-                        symbol, grid_config
-                    )
-                    performance_data["grid_summaries"][symbol] = grid_performance
-                except Exception as e:
-                    self.logger.error(
-                        f"❌ Performance calculation error for {symbol}: {e}"
-                    )
-
-            # Calculate overall system performance
-            if performance_data["grid_summaries"]:
-                total_capital = sum(
-                    grid["total_capital"]
-                    for grid in performance_data["grid_summaries"].values()
-                )
-                total_realized_pnl = sum(
-                    grid["realized_pnl"]
-                    for grid in performance_data["grid_summaries"].values()
-                )
-
-                performance_data["system_performance"] = {
-                    "total_capital_deployed": total_capital,
-                    "total_realized_pnl": total_realized_pnl,
-                    "overall_roi": (total_realized_pnl / total_capital * 100)
-                    if total_capital > 0
-                    else 0,
-                    "architecture_efficiency": "Maximized - Single grid architecture",
-                }
-
-            return performance_data
-
-        except Exception as e:
-            self.logger.error(f"❌ Performance report generation error: {e}")
-            return {"error": str(e)}
-
-    async def _calculate_grid_performance(
-        self, symbol: str, grid_config: SingleAdvancedGridConfig
-    ) -> Dict:
-        """Calculate performance metrics for individual grid"""
-        try:
-            # Get FIFO performance data
-            fifo_performance = self.fifo_service.calculate_fifo_performance(
-                self.client_id
-            )
-
-            # Count filled orders
-            filled_buys = sum(1 for level in grid_config.buy_levels if level["filled"])
-            filled_sells = sum(
-                1 for level in grid_config.sell_levels if level["filled"]
-            )
-
-            # Calculate unrealized PnL (simplified)
-            current_price = await self._get_current_price_with_precision(symbol)
-            unrealized_pnl = 0.0
-            if current_price:
-                # Calculate based on open positions
-                for level in grid_config.buy_levels:
-                    if level["filled"]:
-                        unrealized_pnl += (current_price - level["price"]) * level[
-                            "quantity"
-                        ]
-
-            return {
-                "symbol": symbol,
-                "total_capital": grid_config.total_capital,
-                "strategy": "Single Advanced Grid",
-                "levels_active": len(grid_config.buy_levels)
-                + len(grid_config.sell_levels),
-                "filled_orders": filled_buys + filled_sells,
-                "filled_buys": filled_buys,
-                "filled_sells": filled_sells,
-                "realized_pnl": fifo_performance.get("total_profit", 0.0),
-                "unrealized_pnl": unrealized_pnl,
-                "current_price": current_price,
-                "center_price": grid_config.center_price,
-                "price_deviation": (
-                    (current_price - grid_config.center_price)
-                    / grid_config.center_price
-                    * 100
-                )
-                if current_price and grid_config.center_price
-                else 0,
-                "compound_multiplier": grid_config.compound_multiplier,
-                "volatility_regime": grid_config.volatility_regime,
-                "grid_efficiency": self._calculate_grid_efficiency(grid_config),
-                "advanced_features_score": self._calculate_features_score(symbol),
-            }
-
-        except Exception as e:
-            self.logger.error(
-                f"❌ Grid performance calculation error for {symbol}: {e}"
-            )
-            return {"error": str(e)}
-
-    def _calculate_grid_efficiency(
-        self, grid_config: SingleAdvancedGridConfig
-    ) -> float:
-        """Calculate grid efficiency score (0-100)"""
-        try:
-            total_levels = len(grid_config.buy_levels) + len(grid_config.sell_levels)
-            filled_levels = sum(
-                1
-                for level in grid_config.buy_levels + grid_config.sell_levels
-                if level["filled"]
-            )
-
-            if total_levels == 0:
-                return 0.0
-
-            # Base efficiency from filled orders
-            fill_efficiency = (filled_levels / total_levels) * 40  # Max 40 points
-
-            # Compound efficiency bonus
-            compound_bonus = (
-                min(grid_config.compound_multiplier - 1, 0.5) * 30
-            )  # Max 30 points for 1.5x+ compound
-
-            # Volatility adaptation bonus
-            volatility_bonus = (
-                15 if grid_config.volatility_regime in ["moderate", "high"] else 10
-            )  # Max 15 points
-
-            # Configuration optimization bonus
-            config_bonus = 15  # Base bonus for advanced configuration
-
-            efficiency = (
-                fill_efficiency + compound_bonus + volatility_bonus + config_bonus
-            )
-            return min(efficiency, 100.0)
-
-        except Exception as e:
-            self.logger.error(f"❌ Efficiency calculation error: {e}")
-            return 0.0
-
-    def _calculate_features_score(self, symbol: str) -> float:
-        """Calculate advanced features utilization score (0-100)"""
-        try:
-            score = 0
-
-            # Compound management (20 points)
-            if self.compound_manager.get_current_multiplier() > 1.0:
-                score += 20
-
-            # Volatility management (20 points)
-            if symbol in self.volatility_managers:
-                score += 20
-
-            # Auto-reset capability (15 points)
-            if symbol in self.auto_reset_managers:
-                score += 15
-
-            # Market timing (15 points)
-            market_session = self.market_timer.get_session_info()
-            if market_session["trading_intensity"] != 1.0:  # Active timing adjustments
-                score += 15
-
-            # Precision handling (15 points)
-            if self.metrics["precision_orders"] > 0:
-                score += 15
-
-            # Kelly Criterion (15 points)
-            if self.metrics["kelly_adjustments"] > 0:
-                score += 15
-
-            return min(score, 100.0)
-
-        except Exception as e:
-            self.logger.error(f"❌ Features score calculation error: {e}")
-            return 0.0
-
     async def monitor_and_update_grids(self):
         """
         Continuous monitoring and updating of all active grids
-        This replaces the dual-grid monitoring complexity
+        Now delegates to monitoring service with trading callbacks
         """
         try:
+            trading_callbacks = {
+                "check_and_replace_orders": self._check_and_replace_filled_orders_with_inventory,
+                "update_compound_management": self._update_compound_management,
+                "check_volatility_adjustments": self._check_volatility_adjustments,
+                "check_smart_auto_reset": self._check_smart_auto_reset,
+                "update_performance_tracking": self._update_performance_tracking,
+            }
+
             for symbol in list(self.active_grids.keys()):
                 try:
-                    await self._monitor_single_grid(symbol)
+                    grid_config = self.active_grids[symbol]
+                    await self.monitoring.monitor_single_grid(
+                        symbol, grid_config, trading_callbacks
+                    )
                 except Exception as e:
                     self.logger.error(f"❌ Monitoring error for {symbol}: {e}")
 
         except Exception as e:
             self.logger.error(f"❌ Grid monitoring error: {e}")
-
-    async def _monitor_single_grid(self, symbol: str):
-        """Monitor and update individual grid with all advanced features"""
-        try:
-            grid_config = self.active_grids[symbol]
-
-            # Check for filled orders and replace them
-            await self._check_and_replace_filled_orders(symbol, grid_config)
-
-            # Update compound management
-            await self._update_compound_management(symbol)
-
-            # Check volatility adjustments
-            await self._check_volatility_adjustments(symbol)
-
-            # Check auto-reset conditions
-            await self._check_smart_auto_reset(symbol)
-
-            # Update performance tracking
-            await self._update_performance_tracking(symbol)
-
-        except Exception as e:
-            self.logger.error(f"❌ Single grid monitoring error for {symbol}: {e}")
 
     async def _check_and_replace_filled_orders_with_inventory(self, symbol: str):
         """
@@ -2004,7 +1701,9 @@ class SingleAdvancedGridManager:
         except Exception as e:
             self.logger.error(f"❌ Smart reset execution error for {symbol}: {e}")
 
-    async def _update_performance_tracking(self, symbol: str):
+    async def _update_performance_tracking(
+        self, symbol: str, grid_config=SingleAdvancedGridConfig
+    ):
         """Update advanced performance tracking"""
         try:
             # Update performance metrics periodically
@@ -2020,8 +1719,8 @@ class SingleAdvancedGridManager:
             self._last_performance_update[symbol] = time.time()
 
             # Generate performance update
-            grid_performance = await self._calculate_grid_performance(
-                symbol, self.active_grids[symbol]
+            grid_performance = self.monitoring.calculate_grid_performance(
+                symbol, grid_config
             )
 
             self.logger.info(f"📊 Performance update for {symbol}:")
@@ -2094,41 +1793,75 @@ class SingleAdvancedGridManager:
         except Exception as e:
             self.logger.error(f"❌ Error notifying trade execution: {e}")
 
-    def check_actual_asset_balance(self, symbol: str) -> Dict:
-        """Check actual asset balance in Binance account"""
+    def get_single_grid_status(self, symbol: str) -> Dict:
+        """Get comprehensive status for single advanced grid"""
+        if symbol not in self.active_grids:
+            return {"active": False, "error": "Grid not found"}
+
         try:
-            account_info = self.binance_client.get_account()
-            asset_symbol = symbol.replace("USDT", "")
+            grid_config = self.active_grids[symbol]
+            return self.monitoring.get_single_grid_status(symbol, grid_config)
+        except Exception as e:
+            self.logger.error(f"❌ Status error for {symbol}: {e}")
+            return {"active": False, "error": str(e)}
 
-            actual_asset_balance = 0.0
-            actual_usdt_balance = 0.0
-
-            for balance in account_info["balances"]:
-                if balance["asset"] == asset_symbol:
-                    actual_asset_balance = float(balance["free"])
-                elif balance["asset"] == "USDT":
-                    actual_usdt_balance = float(balance["free"])
-
-            self.logger.info("🔍 ACTUAL BINANCE BALANCES:")
-            self.logger.info(f"   {asset_symbol}: {actual_asset_balance:.4f}")
-            self.logger.info(f"   USDT: ${actual_usdt_balance:.2f}")
-
+    def get_all_active_grids(self) -> Dict:
+        """Get status of all active single advanced grids"""
+        try:
+            return self.monitoring.get_all_active_grids_status(self.active_grids)
+        except Exception as e:
+            self.logger.error(f"❌ All grids status error: {e}")
             return {
-                "asset_balance": actual_asset_balance,
-                "usdt_balance": actual_usdt_balance,
-                "asset_symbol": asset_symbol,
-                "sufficient_for_sells": actual_asset_balance
-                >= 50,  # Adjust threshold as needed
+                "total_active_grids": 0,
+                "trading_mode": "Single Advanced Grid",
+                "grids": {},
+                "error": str(e),
             }
 
+    async def get_unified_performance_report(self) -> Dict:
+        """Generate comprehensive performance report for all active grids"""
+        try:
+            return self.monitoring.get_unified_performance_report(self.active_grids)
         except Exception as e:
-            self.logger.error(f"❌ Balance check error: {e}")
+            self.logger.error(f"❌ Performance report error: {e}")
             return {
-                "asset_balance": 0.0,
-                "usdt_balance": 0.0,
-                "asset_symbol": symbol.replace("USDT", ""),
-                "sufficient_for_sells": False,
+                "report_type": "Single Advanced Grid Performance Report",
                 "error": str(e),
+                "timestamp": time.time(),
+            }
+
+    def _get_advanced_features_status(self, symbol: str) -> Dict:
+        """Get status of advanced features for monitoring service"""
+        try:
+            return {
+                "compound_active": hasattr(
+                    self.compound_manager, "get_current_multiplier"
+                )
+                and self.compound_manager.get_current_multiplier() > 1.0,
+                "volatility_active": symbol in getattr(self, "volatility_managers", {}),
+                "auto_reset_active": symbol in getattr(self, "auto_reset_managers", {}),
+                "market_timing_active": hasattr(self, "market_timer")
+                and getattr(
+                    self.market_timer,
+                    "get_session_info",
+                    lambda: {"trading_intensity": 1.0},
+                )()["trading_intensity"]
+                != 1.0,
+                "precision_handling": True,  # Always active
+                "kelly_criterion": getattr(self, "metrics", {}).get(
+                    "kelly_adjustments", 0
+                )
+                > 0,
+            }
+        except Exception as e:
+            self.logger.error(f"❌ Features status error: {e}")
+            return {
+                "compound_active": False,
+                "volatility_active": False,
+                "auto_reset_active": False,
+                "market_timing_active": False,
+                "precision_handling": True,
+                "kelly_criterion": False,
             }
 
 
