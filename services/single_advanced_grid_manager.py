@@ -26,6 +26,7 @@ from services.advanced_trading_features import (
     VolatilityBasedRiskManager,
 )
 from services.enhanced_fifo_service import EnhancedFIFOService
+from services.grid_utility_service import GridUtilityService
 from services.inventory_manager import SingleGridInventoryManager
 from services.market_analysis import MarketAnalysisService
 from utils.fifo_telegram_monitor import FIFOMonitoringService
@@ -81,6 +82,8 @@ class SingleAdvancedGridManager:
         # Core repositories
         self.client_repo = ClientRepository()
         self.trade_repo = TradeRepository()
+
+        self.utility = GridUtilityService(self.binance_client)
 
         # Services
         # 🔥 REPLACE: Use working integration instead of the broken one
@@ -420,7 +423,7 @@ class SingleAdvancedGridManager:
             asset_quantity = asset_purchase_value / current_price
 
             # Get exchange rules for proper formatting
-            rules = await self._get_exchange_rules_simple(symbol)
+            rules = await self.utility.get_exchange_rules_simple(symbol)
 
             # Format quantity with proper precision
             formatted_quantity = (
@@ -488,7 +491,7 @@ class SingleAdvancedGridManager:
             self.logger.info(f"🎯 Executing enhanced grid setup for {symbol}")
 
             # Get exchange rules (keeping your existing logic)
-            rules = await self._get_exchange_rules_simple(symbol)
+            rules = await self.utility.get_exchange_rules_simple(symbol)
             if not rules:
                 return {"success": False, "error": "Could not get exchange rules"}
 
@@ -663,52 +666,6 @@ class SingleAdvancedGridManager:
         except Exception as e:
             self.logger.error(f"❌ Advanced managers initialization error: {e}")
             # Don't fail the entire grid for this
-
-    async def _get_exchange_rules_simple(self, symbol: str) -> Dict:
-        """Get basic exchange rules with error handling"""
-        try:
-            exchange_info = self.binance_client.get_exchange_info()
-
-            for s in exchange_info["symbols"]:
-                if s["symbol"] == symbol:
-                    # Extract basic rules
-                    rules = {
-                        "price_precision": 4,
-                        "quantity_precision": 1 if symbol == "ADAUSDT" else 3,
-                        "tick_size": 0.0001,
-                        "step_size": 0.1 if symbol == "ADAUSDT" else 0.001,
-                        "min_notional": 5.0,
-                    }
-
-                    # Try to get precise rules from filters
-                    for f in s.get("filters", []):
-                        if f["filterType"] == "PRICE_FILTER":
-                            rules["tick_size"] = float(f["tickSize"])
-                        elif f["filterType"] == "LOT_SIZE":
-                            rules["step_size"] = float(f["stepSize"])
-                        elif f["filterType"] == "MIN_NOTIONAL":
-                            rules["min_notional"] = float(f["minNotional"])
-
-                    return rules
-
-            # Fallback rules
-            return {
-                "price_precision": 4,
-                "quantity_precision": 1,
-                "tick_size": 0.0001,
-                "step_size": 0.1,
-                "min_notional": 5.0,
-            }
-
-        except Exception as e:
-            self.logger.error(f"❌ Exchange rules error: {e}")
-            return {
-                "price_precision": 4,
-                "quantity_precision": 1,
-                "tick_size": 0.0001,
-                "step_size": 0.1,
-                "min_notional": 5.0,
-            }
 
     async def handle_force_command(self, command: str) -> Dict:
         """
@@ -962,7 +919,9 @@ class SingleAdvancedGridManager:
             self.logger.info(f"   💲 Current price: ${current_price:.6f}")
 
             # Get symbol precision requirements
-            symbol_info = await self._get_symbol_precision_info(grid_config.symbol)
+            symbol_info = await self.utility.get_symbol_precision_info(
+                grid_config.symbol
+            )
             price_precision = symbol_info.get("price_precision", 6)
             tick_size = symbol_info.get("tick_size", 0.01)
 
@@ -980,7 +939,7 @@ class SingleAdvancedGridManager:
                 raw_price = current_price * (1 + level_spacing)
 
                 # Apply proper price precision
-                price = self._round_to_tick_size(raw_price, tick_size)
+                price = self.utility.round_to_tick_size(raw_price, tick_size)
 
                 # Compound-progressive order sizing (larger orders higher up for more profit)
                 level_order_size = base_order_size * (
@@ -1009,7 +968,7 @@ class SingleAdvancedGridManager:
                 raw_price = current_price * (1 - level_spacing)
 
                 # Apply proper price precision
-                price = self._round_to_tick_size(raw_price, tick_size)
+                price = self.utility.round_to_tick_size(raw_price, tick_size)
 
                 level_order_size = base_order_size * (1 + i * 0.05)
                 quantity = level_order_size / price
@@ -1062,143 +1021,6 @@ class SingleAdvancedGridManager:
         except Exception as e:
             self.logger.error(f"❌ Grid level creation error: {e}")
             raise
-
-    def _round_to_tick_size(self, price: float, tick_size: float) -> float:
-        """Round price to the nearest valid tick size"""
-        try:
-            if tick_size <= 0:
-                return round(price, 6)  # Fallback
-
-            # Round to nearest tick
-            rounded = round(price / tick_size) * tick_size
-
-            # Ensure we don't round to zero
-            if rounded <= 0:
-                rounded = tick_size
-
-            return rounded
-
-        except Exception as e:
-            self.logger.error(f"Tick size rounding error: {e}")
-            return round(price, 6)  # Safe fallback
-
-    async def _get_symbol_precision_info(self, symbol: str) -> Dict:
-        """Get symbol precision information with ADA-specific overrides"""
-        try:
-            # FORCE ADA overrides to fix precision issues
-            if symbol == "ADAUSDT":
-                info = {
-                    "price_precision": 4,
-                    "quantity_precision": 1,  # Allow 1 decimal place
-                    "tick_size": 0.0001,
-                    "step_size": 0.1,  # Correct ADA step size
-                    "min_notional": 5.0,
-                    "status": "TRADING",
-                }
-                self.logger.info(
-                    f"🔒 FORCED ADA precision: step_size={info['step_size']}, quantity_precision={info['quantity_precision']}"
-                )
-                return info
-
-            # FORCE ETH overrides to fix precision issues
-            if symbol == "ETHUSDT":
-                info = {
-                    "price_precision": 2,
-                    "quantity_precision": 5,  # Allow 5 decimal places
-                    "tick_size": 0.01,
-                    "step_size": 0.00001,  # ETH step size is 0.00001
-                    "min_notional": 5.0,
-                    "status": "TRADING",
-                }
-                self.logger.info(
-                    f"🔒 FORCED ETH precision: step_size={info['step_size']}, quantity_precision={info['quantity_precision']}"
-                )
-                return info
-
-            # For other symbols, get from Binance API# FORCE SOL overrides to fix precision issues
-            if symbol == "SOLUSDT":
-                info = {
-                    "price_precision": 3,
-                    "quantity_precision": 4,  # Allow 4 decimal places
-                    "tick_size": 0.001,
-                    "step_size": 0.0001,  # SOL step size is 0.0001
-                    "min_notional": 5.0,
-                    "status": "TRADING",
-                }
-                self.logger.info(
-                    f"🔒 FORCED SOL precision: step_size={info['step_size']}, quantity_precision={info['quantity_precision']}"
-                )
-                return info
-
-            # For other symbols, get from Binance API# For other symbols, get from Binance API
-            exchange_info = self.binance_client.get_exchange_info()
-            exchange_info = self.binance_client.get_exchange_info()
-
-            for s in exchange_info["symbols"]:
-                if s["symbol"] == symbol:
-                    # Extract precision info
-                    price_precision = s.get("quotePrecision", 6)
-
-                    # Get tick size from PRICE_FILTER
-                    tick_size = 0.01  # Default
-                    for f in s.get("filters", []):
-                        if f["filterType"] == "PRICE_FILTER":
-                            tick_size = float(f["tickSize"])
-                            break
-
-                    # Get quantity precision from LOT_SIZE
-                    quantity_precision = s.get("baseAssetPrecision", 6)
-                    step_size = 1.0  # Default
-                    for f in s.get("filters", []):
-                        if f["filterType"] == "LOT_SIZE":
-                            step_size = float(f["stepSize"])
-                            break
-
-                    # Get minimum notional
-                    min_notional = 10.0  # Default
-                    for f in s.get("filters", []):
-                        if f["filterType"] in ["NOTIONAL", "MIN_NOTIONAL"]:
-                            min_notional = float(f.get("minNotional", "10.0"))
-                            break
-
-                    info = {
-                        "price_precision": price_precision,
-                        "quantity_precision": quantity_precision,
-                        "tick_size": tick_size,
-                        "step_size": step_size,
-                        "min_notional": min_notional,
-                        "status": s.get("status", "TRADING"),
-                    }
-
-                    self.logger.info(
-                        f"📊 {symbol} precision info: tick_size={tick_size}, step_size={step_size}, min_notional=${min_notional}"
-                    )
-                    return info
-
-            # Symbol not found, return defaults
-            self.logger.warning(
-                f"⚠️ Symbol {symbol} not found in exchange info, using defaults"
-            )
-            return {
-                "price_precision": 6,
-                "quantity_precision": 6,
-                "tick_size": 0.01,
-                "step_size": 1.0,
-                "min_notional": 10.0,
-                "status": "UNKNOWN",
-            }
-
-        except Exception as e:
-            self.logger.error(f"❌ Failed to get symbol precision for {symbol}: {e}")
-            # Return safe defaults
-            return {
-                "price_precision": 6,
-                "quantity_precision": 6,
-                "tick_size": 0.01,
-                "step_size": 1.0,
-                "min_notional": 10.0,
-                "status": "ERROR",
-            }
 
     async def _execute_precision_grid_setup(
         self, grid_config: SingleAdvancedGridConfig, grid_levels: Dict
@@ -1797,14 +1619,14 @@ class SingleAdvancedGridManager:
         """
         try:
             # Get exchange rules for this symbol
-            rules = await self._get_exchange_rules_simple(symbol)
+            rules = await self.utility.get_exchange_rules_simple(symbol)
 
             # Calculate new sell price (above the filled buy price)
             spacing = grid_config.grid_spacing
             raw_sell_price = filled_buy_level["price"] * (1 + spacing)
 
             # Make price valid
-            valid_sell_price = self._make_valid_price(
+            valid_sell_price = self.make_valid_price(
                 raw_sell_price, rules["tick_size"], rules["price_precision"]
             )
 
@@ -1817,7 +1639,7 @@ class SingleAdvancedGridManager:
             raw_quantity = order_usd / valid_sell_price
 
             # Make quantity valid
-            valid_quantity = self._make_valid_quantity(
+            valid_quantity = self.utility.make_valid_quantity(
                 raw_quantity,
                 rules["step_size"],
                 rules["quantity_precision"],
@@ -1917,14 +1739,14 @@ class SingleAdvancedGridManager:
         """
         try:
             # Get exchange rules for this symbol
-            rules = await self._get_exchange_rules_simple(symbol)
+            rules = await self.utility.get_exchange_rules_simple(symbol)
 
             # Calculate new buy price (below the filled sell price)
             spacing = grid_config.grid_spacing
             raw_buy_price = filled_sell_level["price"] * (1 - spacing)
 
             # Make price valid
-            valid_buy_price = self._make_valid_price(
+            valid_buy_price = self.make_valid_price(
                 raw_buy_price, rules["tick_size"], rules["price_precision"]
             )
 
@@ -1937,7 +1759,7 @@ class SingleAdvancedGridManager:
             raw_quantity = order_usd / valid_buy_price
 
             # Make quantity valid
-            valid_quantity = self._make_valid_quantity(
+            valid_quantity = self.utility.make_valid_quantity(
                 raw_quantity,
                 rules["step_size"],
                 rules["quantity_precision"],
@@ -2040,120 +1862,6 @@ class SingleAdvancedGridManager:
         import time
 
         return int(time.time()) % 300 == 0
-
-    # SIMPLE BULLETPROOF FIX: Add this method to your single_advanced_grid_manager.py
-
-    async def _get_exchange_rules_simple(self, symbol: str) -> dict:
-        """Get exchange rules with bulletproof fallbacks for any asset"""
-        try:
-            self.logger.info(f"🔍 Getting exchange rules for {symbol}")
-
-            # Fetch from Binance API
-            exchange_info = self.binance_client.get_exchange_info()
-
-            for sym_info in exchange_info["symbols"]:
-                if sym_info["symbol"] == symbol:
-                    # Extract filters
-                    filters = {}
-                    for filter_info in sym_info.get("filters", []):
-                        filters[filter_info["filterType"]] = filter_info
-
-                    # Get price filter (tick_size)
-                    price_filter = filters.get("PRICE_FILTER", {})
-                    tick_size = float(price_filter.get("tickSize", "0.00000001"))
-
-                    # Get lot size filter (step_size)
-                    lot_size = filters.get("LOT_SIZE", {})
-                    step_size = float(lot_size.get("stepSize", "0.00000001"))
-                    min_qty = float(lot_size.get("minQty", "0.00000001"))
-
-                    # Get minimum notional
-                    min_notional = filters.get("MIN_NOTIONAL", {})
-                    min_notional_value = float(min_notional.get("minNotional", "5.0"))
-
-                    rules = {
-                        "symbol": symbol,
-                        "tick_size": tick_size,
-                        "step_size": step_size,
-                        "min_qty": min_qty,
-                        "min_notional": min_notional_value,
-                        "price_precision": self._get_precision_from_step(tick_size),
-                        "quantity_precision": self._get_precision_from_step(step_size),
-                    }
-
-                    self.logger.info(f"✅ Exchange rules for {symbol}:")
-                    self.logger.info(
-                        f"   💲 Price: tick_size={tick_size}, precision={rules['price_precision']}"
-                    )
-                    self.logger.info(
-                        f"   📦 Quantity: step_size={step_size}, precision={rules['quantity_precision']}"
-                    )
-                    self.logger.info(f"   💰 Min notional: ${min_notional_value}")
-
-                    return rules
-
-            raise ValueError(f"Symbol {symbol} not found")
-
-        except Exception as e:
-            self.logger.error(f"❌ Failed to get exchange rules for {symbol}: {e}")
-            # Return safe defaults
-            return {
-                "symbol": symbol,
-                "tick_size": 0.00000001,
-                "step_size": 0.00000001,
-                "min_qty": 0.00000001,
-                "min_notional": 10.0,
-                "price_precision": 8,
-                "quantity_precision": 8,
-            }
-
-    def _get_precision_from_step(self, step_size: float) -> int:
-        """Calculate precision from step size"""
-        try:
-            if step_size >= 1:
-                return 0
-
-            # Convert to string and count decimal places
-            step_str = f"{step_size:.10f}".rstrip("0")
-            if "." in step_str:
-                return len(step_str.split(".")[1])
-            return 0
-        except:
-            return 8
-
-    def _make_valid_price(
-        self, price: float, tick_size: float, precision: int
-    ) -> float:
-        """Make any price valid for Binance"""
-        try:
-            # Round to tick size
-            rounded = round(price / tick_size) * tick_size
-
-            # Format with correct precision
-            formatted = round(rounded, precision)
-
-            return formatted
-        except:
-            return round(price, precision)
-
-    def _make_valid_quantity(
-        self, quantity: float, step_size: float, precision: int, min_qty: float
-    ) -> float:
-        """Make any quantity valid for Binance"""
-        try:
-            # Round to step size
-            rounded = round(quantity / step_size) * step_size
-
-            # Ensure minimum quantity
-            if rounded < min_qty:
-                rounded = min_qty
-
-            # Format with correct precision
-            formatted = round(rounded, precision)
-
-            return formatted
-        except:
-            return max(round(quantity, precision), min_qty)
 
     async def _update_compound_management(self, symbol: str):
         """Update compound management with latest performance"""
