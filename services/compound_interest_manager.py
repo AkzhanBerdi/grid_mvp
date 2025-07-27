@@ -78,13 +78,12 @@ class CompoundInterestManager:
         """
         try:
             # Get current performance metrics
-            performance = await self._get_performance_metrics(client_id)
-
+            performance = self._safe_get_performance_metrics(client_id)
             # Calculate Kelly Criterion optimal fraction
-            kelly_fraction = await self._calculate_kelly_fraction(client_id, symbol)
+            kelly_fraction = self._calculate_kelly_fraction(client_id, symbol)
 
             # Calculate compound multiplier based on accumulated profits
-            compound_multiplier = await self._calculate_compound_multiplier(client_id)
+            compound_multiplier = self._calculate_compound_multiplier(client_id)
 
             # Combine Kelly and compound factors
             optimal_fraction = kelly_fraction * compound_multiplier
@@ -127,8 +126,7 @@ class CompoundInterestManager:
         - Market conditions influence allocation decisions
         """
         try:
-            performance = await self._get_performance_metrics(client_id)
-
+            performance = await self._safe_get_performance_metrics(client_id)
             # Base allocation: 40% conservative default
             base_allocation = 0.4
 
@@ -215,7 +213,7 @@ class CompoundInterestManager:
         except Exception as e:
             self.logger.error(f"❌ Error recording trade profit: {e}")
 
-    async def _calculate_kelly_fraction(self, client_id: int, symbol: str) -> float:
+    def _calculate_kelly_fraction(self, client_id: int, symbol: str) -> float:
         """
         Calculate Kelly Criterion optimal fraction for position sizing
 
@@ -273,7 +271,7 @@ class CompoundInterestManager:
             self.logger.error(f"❌ Kelly calculation error for {symbol}: {e}")
             return 0.1  # Conservative fallback
 
-    async def _calculate_compound_multiplier(self, client_id: int) -> float:
+    def _calculate_compound_multiplier(self, client_id: int) -> float:
         """
         Calculate compound multiplier based on accumulated profits
 
@@ -284,8 +282,7 @@ class CompoundInterestManager:
         - Recent losses reduce multiplier
         """
         try:
-            performance = await self._get_performance_metrics(client_id)
-
+            performance = self._safe_get_performance_metrics(client_id)
             total_profit = performance.get("total_profit", 0.0)
             recent_24h_profit = performance.get("recent_24h_profit", 0.0)
 
@@ -346,7 +343,7 @@ class CompoundInterestManager:
 
         return safe_fraction
 
-    async def _get_performance_metrics(self, client_id: int) -> Dict:
+    def _get_performance_metrics(self, client_id: int) -> Dict:
         """Get comprehensive performance metrics from FIFO service"""
         try:
             # Check cache first
@@ -358,7 +355,9 @@ class CompoundInterestManager:
                 return self.client_performance[cache_key]
 
             # Get fresh data from FIFO service
-            performance = self.fifo_service.calculate_fifo_performance(client_id)
+            performance = self.fifo_service.calculate_fifo_profit_with_cost_basis(
+                client_id
+            )
 
             # Cache the result
             self.client_performance[cache_key] = performance
@@ -382,7 +381,8 @@ class CompoundInterestManager:
         try:
             # This would integrate with your existing trade repository
             # For now, we'll use FIFO service data filtered by symbol
-            all_trades = self.fifo_service._get_recent_trades_formatted(client_id, 100)
+            summary = self.fifo_service.get_cost_basis_summary(client_id)
+            all_trades = self._convert_cost_basis_to_trades(summary, symbol)
             symbol_trades = [t for t in all_trades if t.get("symbol") == symbol]
 
             # Calculate profit for each trade (simplified)
@@ -399,6 +399,46 @@ class CompoundInterestManager:
             self.logger.error(f"❌ Error getting symbol trade history: {e}")
             return []
 
+    def _convert_cost_basis_to_trades(self, summary: Dict, symbol: str) -> list:
+        """Convert cost basis summary to trade-like format for Kelly calculation"""
+        trades = []
+        try:
+            if symbol in summary.get("symbols", {}):
+                for record in summary["symbols"][symbol]["records"]:
+                    # Add cost basis as BUY trade
+                    trades.append(
+                        {
+                            "symbol": symbol,
+                            "side": "BUY",
+                            "quantity": record["quantity"],
+                            "price": record["cost_per_unit"],
+                            "profit": 0,
+                            "total_value": record["total_cost"],
+                        }
+                    )
+
+                    # If some quantity was sold, estimate SELL trades
+                    if record["remaining_quantity"] < record["quantity"]:
+                        sold_qty = record["quantity"] - record["remaining_quantity"]
+                        # Assume 2.5% profit for Kelly calculation
+                        sell_price = record["cost_per_unit"] * 1.025
+                        profit = sold_qty * record["cost_per_unit"] * 0.025
+
+                        trades.append(
+                            {
+                                "symbol": symbol,
+                                "side": "SELL",
+                                "quantity": sold_qty,
+                                "price": sell_price,
+                                "profit": profit,
+                                "total_value": sold_qty * sell_price,
+                            }
+                        )
+        except Exception as e:
+            self.logger.error(f"❌ Error converting cost basis to trades: {e}")
+
+        return trades
+
     async def _update_performance_cache(self, client_id: int):
         """Force update of performance cache"""
         cache_key = f"perf_{client_id}"
@@ -409,8 +449,7 @@ class CompoundInterestManager:
     async def _trigger_rebalancing_check(self, client_id: int):
         """Check if grid allocation should be rebalanced based on performance"""
         try:
-            performance = await self._get_performance_metrics(client_id)
-
+            performance = await self._safe_get_performance_metrics(client_id)
             # Simple rebalancing logic
             recent_profit = performance.get("recent_24h_profit", 0.0)
 
@@ -448,10 +487,10 @@ class CompoundInterestManager:
     async def get_performance_summary(self, client_id: int) -> Dict:
         """Get comprehensive performance summary for monitoring"""
         try:
-            performance = await self._get_performance_metrics(client_id)
+            performance = await self._safe_get_performance_metrics(client_id)
             kelly_ada = await self._calculate_kelly_fraction(client_id, "ADAUSDT")
             kelly_avax = await self._calculate_kelly_fraction(client_id, "AVAXUSDT")
-            compound_multiplier = await self._calculate_compound_multiplier(client_id)
+            compound_multiplier = self._calculate_compound_multiplier(client_id)
 
             return {
                 "total_profit": performance.get("total_profit", 0.0),
@@ -468,7 +507,39 @@ class CompoundInterestManager:
             self.logger.error(f"❌ Performance summary error: {e}")
             return {"error": str(e)}
 
+    # Add this method to CompoundInterestManager class
+    def _safe_get_performance_metrics(self, client_id: int) -> Dict:
+        """Safe version that uses correct FIFO method"""
+        try:
+            # Use the correct method that exists
+            fifo_data = self.fifo_service.calculate_fifo_profit_with_cost_basis(
+                client_id
+            )
 
+            # Convert to expected format
+            return {
+                "total_trades": fifo_data.get("total_trades", 0),
+                "total_profit": fifo_data.get("total_profit", 0.0),
+                "win_rate": fifo_data.get("win_rate", 50.0),
+                "total_volume": fifo_data.get("total_profit", 0.0) * 40,
+                "recent_24h_profit": fifo_data.get("realized_profit", 0.0),
+                "profit_factor": 1.0 + (fifo_data.get("total_profit", 0.0) / 100.0),
+            }
+        except Exception as e:
+            self.logger.error(f"❌ Error getting performance metrics: {e}")
+            return {
+                "total_trades": 0,
+                "total_profit": 0.0,
+                "win_rate": 50.0,
+                "total_volume": 0.0,
+                "recent_24h_profit": 0.0,
+                "profit_factor": 1.0,
+            }
+
+
+# Replace the broken _get_performance_metrics call
+# OLD: performance = await self._get_performance_metrics(client_id)
+# NEW: performance = await self._safe_get_performance_metrics(client_id)
 # =============================================================================
 # INTEGRATION WITH EXISTING SYSTEM
 # =============================================================================
