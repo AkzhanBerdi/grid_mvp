@@ -1,19 +1,12 @@
-# services/grid_utility_service.py
+# services/grid_utility_service_fixed.py
 """
-Grid Utility Service - Extracted from SingleAdvancedGridManager
+FIXED Grid Utility Service - Extracted from SingleAdvancedGridManager
 ==============================================================
 
-Pure utility functions for grid trading operations:
-- Price/quantity precision handling
-- Exchange rules processing
-- Binance API formatting
-- Mathematical calculations
+Fixed the string formatting bug that was causing format_quantity_string(1000, 0)
+to return "1" instead of "1000"
 
-Benefits of extraction:
-- Reusable across different grid managers
-- Easy to unit test
-- Clean separation of concerns
-- No dependencies on specific grid configurations
+The issue was in the rstrip("0") logic which was too aggressive.
 """
 
 import logging
@@ -333,28 +326,72 @@ class GridUtilityService:
         return await self.get_exchange_rules_simple(symbol)
 
     # ========================================
-    # FORMATTING UTILITIES
+    # FORMATTING UTILITIES - FIXED VERSION
     # ========================================
 
     def format_price_string(self, price: float, precision: int) -> str:
-        """Format price as string with correct precision"""
-        formatted = f"{price:.{precision}f}".rstrip("0").rstrip(".")
+        """
+        FIXED: Format price as string with correct precision
 
-        # Ensure minimum decimal places for display
-        if "." not in formatted and precision > 0:
-            formatted += ".00"
+        The key fix: Only strip trailing zeros AFTER the decimal point,
+        never strip all zeros which would break whole numbers.
+        """
+        try:
+            if precision < 0:
+                # Handle negative precision gracefully
+                formatted = f"{price:.0f}"
+            else:
+                formatted = f"{price:.{precision}f}"
 
-        return formatted
+            # Only strip trailing zeros if there's a decimal point
+            if "." in formatted:
+                # Strip trailing zeros after decimal point
+                formatted = formatted.rstrip("0")
+                # If we stripped all decimal digits, remove the decimal point too
+                if formatted.endswith("."):
+                    formatted = formatted[:-1]
+
+            # Ensure minimum decimal places for display (for prices)
+            if "." not in formatted and precision > 0:
+                formatted += ".00"
+
+            return formatted
+
+        except Exception as e:
+            self.logger.error(f"Price formatting error: {e}")
+            return f"{price:.{max(0, precision)}f}"
 
     def format_quantity_string(self, quantity: float, precision: int) -> str:
-        """Format quantity as string with correct precision"""
-        formatted = f"{quantity:.{precision}f}".rstrip("0").rstrip(".")
+        """
+        FIXED: Format quantity as string with correct precision
 
-        # Ensure minimum formatting
-        if "." not in formatted and precision > 0:
-            formatted += ".0"
+        The key fix: Only strip trailing zeros AFTER the decimal point,
+        never strip all zeros which would break whole numbers like 1000.
+        """
+        try:
+            if precision < 0:
+                # Handle negative precision gracefully
+                formatted = f"{quantity:.0f}"
+            else:
+                formatted = f"{quantity:.{precision}f}"
 
-        return formatted
+            # Only strip trailing zeros if there's a decimal point
+            if "." in formatted:
+                # Strip trailing zeros after decimal point
+                formatted = formatted.rstrip("0")
+                # If we stripped all decimal digits, remove the decimal point too
+                if formatted.endswith("."):
+                    formatted = formatted[:-1]
+
+            # Ensure minimum formatting for quantities
+            if "." not in formatted and precision > 0:
+                formatted += ".0"
+
+            return formatted
+
+        except Exception as e:
+            self.logger.error(f"Quantity formatting error: {e}")
+            return f"{quantity:.{max(0, precision)}f}"
 
     # ========================================
     # VALIDATION UTILITIES
