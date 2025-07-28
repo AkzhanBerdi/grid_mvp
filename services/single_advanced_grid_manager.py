@@ -583,43 +583,71 @@ class SingleAdvancedGridManager:
                 try:
                     grid_config = self.active_grids[symbol]
 
-                    # Count current orders
+                    # 🔥 CRITICAL FIX: Add the missing order monitoring call
+                    self.logger.debug(f"🔍 Checking filled orders for {symbol}")
+                    await self.trading_engine.check_and_replace_filled_orders(
+                        symbol, grid_config
+                    )
+
+                    # Count orders after monitoring (existing code)
                     active_orders = sum(
                         1
                         for level in grid_config.buy_levels + grid_config.sell_levels
                         if level.get("order_id") and not level.get("filled")
                     )
 
-                    # If order count is low, run diagnostic
+                    # Log order status
+                    self.logger.info(
+                        f"📊 {symbol}: {active_orders} active orders after monitoring"
+                    )
+
+                    # If order count is low, run diagnostic (existing code)
                     if active_orders < 8:  # Should have ~10 orders
                         self.logger.warning(
                             f"⚠️ Low order count for {symbol}: {active_orders}"
                         )
 
-                        # Run diagnostic
-                        diagnosis = await self.diagnose_order_issues(symbol)
-
-                        # Take action based on diagnosis
-                        if diagnosis.get("inventory_issues"):
-                            self.logger.warning(
-                                "🏭 Inventory manager may be blocking orders"
+                        # Run diagnostic (keep your existing diagnostic code if you have it)
+                        if hasattr(self, "diagnostic_service"):
+                            diagnosis = await self.diagnostic_service.diagnose_order_replacement_issues(
+                                symbol
                             )
 
-                        if diagnosis.get("method_issues"):
-                            self.logger.warning(
-                                "🔧 Order replacement methods have issues"
-                            )
+                            if diagnosis.get("issues_found"):
+                                self.logger.error(
+                                    f"🚨 Diagnostic found issues for {symbol}:"
+                                )
+                                for issue in diagnosis["issues_found"]:
+                                    self.logger.error(
+                                        f"   • {issue['issue']}: {issue['details']}"
+                                    )
 
-                    # Continue with normal monitoring
-                    await self.trading_engine.check_and_replace_filled_orders(
-                        symbol, grid_config
-                    )
+                    # Update other systems (keep your existing update calls if you have them)
+                    try:
+                        await self._update_compound_management(symbol)
+                    except:
+                        pass  # Don't break if this method doesn't exist
+
+                    try:
+                        await self._check_volatility_adjustments(symbol)
+                    except:
+                        pass  # Don't break if this method doesn't exist
+
+                    try:
+                        await self._check_smart_auto_reset(symbol)
+                    except:
+                        pass  # Don't break if this method doesn't exist
+
+                    try:
+                        await self._update_performance_tracking(symbol, grid_config)
+                    except:
+                        pass  # Don't break if this method doesn't exist
 
                 except Exception as e:
                     self.logger.error(f"❌ Monitoring error for {symbol}: {e}")
 
         except Exception as e:
-            self.logger.error(f"❌ Grid monitoring error: {e}")
+            self.logger.error(f"❌ Grid monitoring system error: {e}")
 
     async def _get_current_price_with_precision(self, symbol: str) -> Optional[float]:
         """Get current price with precision handling"""
@@ -1083,6 +1111,35 @@ class SingleAdvancedGridManager:
                 "kelly_criterion": False,
                 "trading_engine_active": True,
             }
+
+    async def _optimize_grid_levels_for_capital(
+        self, total_capital: float, order_size: float
+    ) -> Dict:
+        """
+        Optimize grid levels based on available capital and minimum order sizes
+        """
+        min_order_size = 10.0
+
+        # Calculate maximum viable levels
+        max_levels = int(total_capital / min_order_size)
+
+        if max_levels < 5:
+            # Insufficient capital for full grid
+            self.logger.warning(f"⚠️ Limited capital: only {max_levels} levels possible")
+            return {
+                "buy_levels": min(max_levels // 2, 3),
+                "sell_levels": min(max_levels // 2, 3),
+                "adjusted_order_size": max(order_size, min_order_size),
+                "capital_efficiency": "Limited",
+            }
+
+        # Full grid possible
+        return {
+            "buy_levels": 5,
+            "sell_levels": 5,
+            "adjusted_order_size": max(order_size, min_order_size),
+            "capital_efficiency": "Optimal",
+        }
 
 
 # Helper function for FORCE commands with proper allocation

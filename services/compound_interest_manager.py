@@ -22,7 +22,6 @@ from typing import Dict
 
 import numpy as np
 
-from config import Config
 from services.enhanced_fifo_service import EnhancedFIFOService
 
 
@@ -68,19 +67,13 @@ class CompoundInterestManager:
     ) -> float:
         """
         Calculate optimal order size using compound interest + Kelly Criterion
-
-        Process:
-        1. Get current profit performance from FIFO
-        2. Calculate Kelly Criterion optimal fraction
-        3. Apply compound interest multiplier
-        4. Apply safety constraints
-        5. Return optimized order size
         """
         try:
-            # Get current performance metrics
+            # FIXED: Remove 'await' - this is a sync method
             performance = self._safe_get_performance_metrics(client_id)
-            # Calculate Kelly Criterion optimal fraction
-            kelly_fraction = self._calculate_kelly_fraction(client_id, symbol)
+
+            # FIXED: Add 'await' - this IS an async method
+            kelly_fraction = await self._calculate_kelly_fraction(client_id, symbol)
 
             # Calculate compound multiplier based on accumulated profits
             compound_multiplier = self._calculate_compound_multiplier(client_id)
@@ -93,14 +86,14 @@ class CompoundInterestManager:
                 optimal_fraction, client_id, performance
             )
 
-            # Calculate final order size
+            # Calculate final order size with minimum enforcement
+            min_order_size = 10.0  # Exchange minimum
             order_size = base_capital * safe_fraction
+            final_order_size = max(order_size, min_order_size)
 
-            # Ensure minimum order size for exchange compliance
-            min_size = (
-                Config.MIN_ORDER_SIZE if hasattr(Config, "MIN_ORDER_SIZE") else 10.0
-            )
-            final_order_size = max(order_size, min_size)
+            # Additional safety: ensure we don't exceed 20% of capital per order
+            max_order_size = base_capital * 0.2
+            final_order_size = min(final_order_size, max_order_size)
 
             self.logger.info(
                 f"💰 Client {client_id} {symbol}: Kelly={kelly_fraction:.3f}, "
@@ -113,20 +106,17 @@ class CompoundInterestManager:
             self.logger.error(
                 f"❌ Error calculating order size for client {client_id}: {e}"
             )
-            # Safe fallback
+            # Safe fallback - ensure minimum viable order
             return max(base_capital * 0.1, 10.0)
 
     async def get_grid_allocation(self, client_id: int, total_capital: float) -> Dict:
         """
         Calculate dynamic base/enhanced grid allocation based on performance
-
-        Logic:
-        - High-performing clients get more enhanced allocation (higher risk/reward)
-        - Poor-performing clients get more base allocation (conservative)
-        - Market conditions influence allocation decisions
         """
         try:
-            performance = await self._safe_get_performance_metrics(client_id)
+            # FIXED: Remove 'await' - this is a sync method
+            performance = self._safe_get_performance_metrics(client_id)
+
             # Base allocation: 40% conservative default
             base_allocation = 0.4
 
@@ -139,31 +129,44 @@ class CompoundInterestManager:
 
                 # Good performance: increase enhanced allocation
                 if win_rate > 0.6 and profit_factor > 1.2 and total_profit > 0:
-                    base_allocation = 0.3  # More aggressive
+                    enhanced_boost = min(
+                        0.3, total_profit / 100.0
+                    )  # +0.01 per $1 profit
+                    base_allocation = max(
+                        0.2, 0.4 - enhanced_boost
+                    )  # Reduce base allocation
 
                 # Poor performance: increase base allocation
-                elif win_rate < 0.4 or profit_factor < 0.8 or total_profit < -50:
-                    base_allocation = 0.6  # More conservative
-
-                # Check for recent drawdown
-                recent_profit = performance.get("recent_24h_profit", 0.0)
-                if recent_profit < -total_capital * 0.05:  # 5% daily loss
+                elif win_rate < 0.4 or total_profit < -50:
+                    safety_boost = min(
+                        0.3, abs(total_profit) / 200.0
+                    )  # +0.005 per $1 loss
                     base_allocation = min(
-                        0.7, base_allocation + 0.2
-                    )  # Much more conservative
+                        0.8, 0.4 + safety_boost
+                    )  # Increase base allocation
 
-            # Ensure reasonable bounds
-            base_allocation = max(0.2, min(0.8, base_allocation))
             enhanced_allocation = 1.0 - base_allocation
+
+            # Calculate actual capital amounts
+            base_capital = total_capital * base_allocation
+            enhanced_capital = total_capital * enhanced_allocation
+
+            # Determine reasoning
+            if performance["total_trades"] < 10:
+                reasoning = "Default allocation (insufficient trade history)"
+            elif base_allocation > 0.5:
+                reasoning = f"Conservative allocation (poor performance: {win_rate * 100:.1f}% win rate)"
+            elif enhanced_allocation > 0.7:
+                reasoning = f"Aggressive allocation (strong performance: {win_rate * 100:.1f}% win rate, ${total_profit:.0f} profit)"
+            else:
+                reasoning = f"Balanced allocation ({win_rate * 100:.1f}% win rate, ${total_profit:.0f} profit)"
 
             result = {
                 "base_allocation": base_allocation,
                 "enhanced_allocation": enhanced_allocation,
-                "base_capital": total_capital * base_allocation,
-                "enhanced_capital": total_capital * enhanced_allocation,
-                "reasoning": self._get_allocation_reasoning(
-                    performance, base_allocation
-                ),
+                "base_capital": base_capital,
+                "enhanced_capital": enhanced_capital,
+                "reasoning": reasoning,
             }
 
             self.logger.info(
@@ -213,7 +216,7 @@ class CompoundInterestManager:
         except Exception as e:
             self.logger.error(f"❌ Error recording trade profit: {e}")
 
-    def _calculate_kelly_fraction(self, client_id: int, symbol: str) -> float:
+    async def _calculate_kelly_fraction(self, client_id: int, symbol: str) -> float:
         """
         Calculate Kelly Criterion optimal fraction for position sizing
 
@@ -224,7 +227,7 @@ class CompoundInterestManager:
         - q = probability of losing (1-p)
         """
         try:
-            # Get symbol-specific trade history
+            # Get symbol-specific trade history (NOW PROPERLY AWAITED)
             trades = await self._get_symbol_trade_history(client_id, symbol)
 
             if len(trades) < self.min_trades_for_kelly:
@@ -487,9 +490,14 @@ class CompoundInterestManager:
     async def get_performance_summary(self, client_id: int) -> Dict:
         """Get comprehensive performance summary for monitoring"""
         try:
-            performance = await self._safe_get_performance_metrics(client_id)
+            # FIXED: Remove 'await' - this is a sync method
+            performance = self._safe_get_performance_metrics(client_id)
+
+            # FIXED: Add 'await' for async methods
             kelly_ada = await self._calculate_kelly_fraction(client_id, "ADAUSDT")
             kelly_avax = await self._calculate_kelly_fraction(client_id, "AVAXUSDT")
+
+            # This is sync, no await needed
             compound_multiplier = self._calculate_compound_multiplier(client_id)
 
             return {

@@ -959,6 +959,41 @@ class GridMonitoringService:
                 "client_id": self.client_id,
             }
 
+    async def _optimized_monitoring_cycle(self, grid_configs: Dict) -> Dict:
+        """
+        Optimized monitoring cycle with better error handling
+        """
+        start_time = time.time()
+        results = {}
+
+        for symbol, grid_config in grid_configs.items():
+            try:
+                # Quick health check
+                health_status = await self._quick_health_check(symbol, grid_config)
+
+                if health_status.get("needs_attention"):
+                    # Full monitoring for grids needing attention
+                    detailed_result = await self.monitor_single_grid(
+                        symbol, grid_config
+                    )
+                    results[symbol] = detailed_result
+                else:
+                    # Light monitoring for healthy grids
+                    results[symbol] = {"status": "healthy", "action": "continue"}
+
+            except Exception as e:
+                self.logger.error(f"❌ Monitoring error for {symbol}: {e}")
+                results[symbol] = {"status": "error", "error": str(e)}
+
+        cycle_time = time.time() - start_time
+
+        return {
+            "cycle_time": cycle_time,
+            "grids_monitored": len(grid_configs),
+            "results": results,
+            "efficiency": "High" if cycle_time < 1.0 else "Moderate",
+        }
+
 
 # ========================================
 # CONVENIENCE FUNCTIONS

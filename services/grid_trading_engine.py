@@ -15,7 +15,7 @@ advanced features for robust error handling.
 """
 
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
@@ -1509,3 +1509,115 @@ class GridTradingEngine:
         except Exception as e:
             self.logger.error(f"❌ Grid level creation error: {e}")
             raise
+
+    async def _optimize_asset_allocation(
+        self, symbol: str, total_capital: float
+    ) -> Dict:
+        """
+        Optimize asset allocation between base and quote currencies
+        """
+        try:
+            # Get current balances
+            base_asset = symbol.replace("USDT", "")
+            account_info = self.binance_client.get_account()
+
+            usdt_balance = 0.0
+            base_balance = 0.0
+
+            for balance in account_info["balances"]:
+                if balance["asset"] == "USDT":
+                    usdt_balance = float(balance["free"])
+                elif balance["asset"] == base_asset:
+                    base_balance = float(balance["free"])
+
+            # Get current price
+            ticker = self.binance_client.get_symbol_ticker(symbol=symbol)
+            current_price = float(ticker["price"])
+
+            # Calculate total value in USDT
+            total_value = usdt_balance + (base_balance * current_price)
+
+            # Optimal allocation: 60% USDT (for buys), 40% base asset (for sells)
+            target_usdt = total_value * 0.6
+            target_base_value = total_value * 0.4
+            target_base_quantity = target_base_value / current_price
+
+            rebalancing_needed = (
+                abs(usdt_balance - target_usdt) > total_value * 0.1
+                or abs(base_balance * current_price - target_base_value)
+                > total_value * 0.1
+            )
+
+            return {
+                "current_usdt": usdt_balance,
+                "current_base": base_balance,
+                "current_base_value": base_balance * current_price,
+                "target_usdt": target_usdt,
+                "target_base_quantity": target_base_quantity,
+                "rebalancing_needed": rebalancing_needed,
+                "total_value": total_value,
+                "current_price": current_price,
+            }
+
+        except Exception as e:
+            self.logger.error(f"❌ Asset allocation optimization error: {e}")
+            return {"error": str(e)}
+
+    async def _enhanced_error_recovery(
+        self, symbol: str, failed_orders: List[Dict]
+    ) -> Dict:
+        """
+        Enhanced error recovery for failed orders
+        """
+        try:
+            recovery_stats = {
+                "attempted_recovery": 0,
+                "successful_recovery": 0,
+                "permanent_failures": 0,
+            }
+
+            for failed_order in failed_orders:
+                recovery_stats["attempted_recovery"] += 1
+
+                # Analyze failure reason
+                failure_reason = failed_order.get("error", "Unknown")
+
+                if "insufficient" in failure_reason.lower():
+                    # Balance issue - try smaller size
+                    original_size = failed_order.get("order_size", 0)
+                    reduced_size = original_size * 0.5
+
+                    if reduced_size >= 10.0:  # Still above minimum
+                        retry_result = await self._retry_order_with_size(
+                            failed_order, reduced_size
+                        )
+                        if retry_result.get("success"):
+                            recovery_stats["successful_recovery"] += 1
+                            continue
+
+                elif "precision" in failure_reason.lower():
+                    # Precision issue - adjust precision
+                    retry_result = await self._retry_order_with_precision_fix(
+                        failed_order
+                    )
+                    if retry_result.get("success"):
+                        recovery_stats["successful_recovery"] += 1
+                        continue
+
+                # Mark as permanent failure
+                recovery_stats["permanent_failures"] += 1
+
+            recovery_rate = (
+                recovery_stats["successful_recovery"]
+                / recovery_stats["attempted_recovery"]
+                if recovery_stats["attempted_recovery"] > 0
+                else 0
+            )
+
+            self.logger.info(f"🔄 Recovery completed: {recovery_rate:.1%} success rate")
+
+            return recovery_stats
+
+        except Exception as e:
+            self.logger.error(f"❌ Enhanced error recovery failed: {e}")
+            return {"error": str(e)}
