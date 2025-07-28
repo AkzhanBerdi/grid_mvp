@@ -36,6 +36,7 @@ from services.grid_trading_engine import (
 from services.grid_utility_service import GridUtilityService
 from services.inventory_manager import SingleGridInventoryManager
 from services.market_analysis import MarketAnalysisService
+from services.order_replacement_diagnosis_fix import OrderReplacementDiagnostics
 from utils.fifo_telegram_monitor import FIFOMonitoringService
 
 # Replace the entire compound manager section with this:
@@ -92,10 +93,9 @@ class SingleAdvancedGridManager:
 
         # 🔥 NEW: Separated trading engine
         self.trading_engine = GridTradingEngine(binance_client, client_id)
-
-        # Grid decomposition starts here
         self.utility = GridUtilityService(self.binance_client)
         self.monitoring = GridMonitoringService(self.client_id, self.binance_client)
+        self.order_diagnostics = OrderReplacementDiagnostics(self, self.trading_engine)
 
         # Services
         self.logger.info("✅ Working notification integration initialized")
@@ -176,6 +176,60 @@ class SingleAdvancedGridManager:
         self.logger.info("   📊 Advanced Performance Monitoring: UNIFIED")
         self.logger.info("   🎯 Grid Strategy: Single 10-Level Advanced Grid")
         self.logger.info("   💎 Capital Efficiency: 100% (vs 35/65 split)")
+
+    async def diagnose_order_issues(self, symbol: str):
+        """Run comprehensive order replacement diagnostics"""
+        try:
+            self.logger.info(f"🔍 Running order replacement diagnostics for {symbol}")
+
+            # Run the diagnostic
+            diagnosis = await self.order_diagnostics.diagnose_order_replacement_issues(
+                symbol
+            )
+
+            # Log the results
+            self.logger.info("📊 DIAGNOSTIC RESULTS:")
+            self.logger.info(f"   Current State: {diagnosis.get('current_state', {})}")
+
+            # Log issues found
+            issues = diagnosis.get("issues_found", [])
+            if issues:
+                self.logger.error("❌ ISSUES FOUND:")
+                for issue in issues:
+                    self.logger.error(
+                        f"   - {issue['issue']}: {issue['details']} (severity: {issue['severity']})"
+                    )
+
+            # Log inventory issues
+            inventory_issues = diagnosis.get("inventory_issues", [])
+            if inventory_issues:
+                self.logger.error("🏭 INVENTORY ISSUES:")
+                for issue in inventory_issues:
+                    self.logger.error(
+                        f"   - {issue['type']}: {issue.get('reason', issue.get('error', 'Unknown'))}"
+                    )
+
+            # Log method issues
+            method_issues = diagnosis.get("method_issues", [])
+            if method_issues:
+                self.logger.error("🔧 METHOD ISSUES:")
+                for issue in method_issues:
+                    self.logger.error(
+                        f"   - {issue['type']}: {issue.get('method', issue.get('error', 'Unknown'))}"
+                    )
+
+            # Log recommendations
+            recommendations = diagnosis.get("recommendations", [])
+            if recommendations:
+                self.logger.info("💡 RECOMMENDATIONS:")
+                for rec in recommendations:
+                    self.logger.info(f"   {rec}")
+
+            return diagnosis
+
+        except Exception as e:
+            self.logger.error(f"❌ Error running diagnostics: {e}")
+            return {"error": str(e)}
 
     async def start_single_advanced_grid(
         self, symbol: str, total_capital: float
@@ -523,25 +577,43 @@ class SingleAdvancedGridManager:
             return {"success": False, "error": str(e)}
 
     async def monitor_and_update_grids(self):
-        """
-        Continuous monitoring and updating of all active grids
-        Now delegates core trading operations to GridTradingEngine
-        """
+        """Enhanced monitoring with automatic diagnostics"""
         try:
             for symbol in list(self.active_grids.keys()):
                 try:
                     grid_config = self.active_grids[symbol]
 
-                    # 🔥 NEW - Use trading engine for order management
+                    # Count current orders
+                    active_orders = sum(
+                        1
+                        for level in grid_config.buy_levels + grid_config.sell_levels
+                        if level.get("order_id") and not level.get("filled")
+                    )
+
+                    # If order count is low, run diagnostic
+                    if active_orders < 8:  # Should have ~10 orders
+                        self.logger.warning(
+                            f"⚠️ Low order count for {symbol}: {active_orders}"
+                        )
+
+                        # Run diagnostic
+                        diagnosis = await self.diagnose_order_issues(symbol)
+
+                        # Take action based on diagnosis
+                        if diagnosis.get("inventory_issues"):
+                            self.logger.warning(
+                                "🏭 Inventory manager may be blocking orders"
+                            )
+
+                        if diagnosis.get("method_issues"):
+                            self.logger.warning(
+                                "🔧 Order replacement methods have issues"
+                            )
+
+                    # Continue with normal monitoring
                     await self.trading_engine.check_and_replace_filled_orders(
                         symbol, grid_config
                     )
-
-                    # Advanced features management (keep in manager)
-                    await self._update_compound_management(symbol)
-                    await self._check_volatility_adjustments(symbol)
-                    await self._check_smart_auto_reset(symbol)
-                    await self._update_performance_tracking(symbol, grid_config)
 
                 except Exception as e:
                     self.logger.error(f"❌ Monitoring error for {symbol}: {e}")
