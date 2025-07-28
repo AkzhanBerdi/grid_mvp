@@ -20,10 +20,13 @@ class BaseClientHandler:
     """
 
     def __init__(self):
+        self.logger = logging.getLogger(__name__)
         self.client_repo = ClientRepository()
         self.grid_orchestrator = GridOrchestrator()
+        self.logger.info(
+            f"🎯 Base_handler.py using GridOrchestrator instance ID: {id(self.grid_orchestrator)}"
+        )
         self.client_states = {}
-        self.logger = logging.getLogger(__name__)
 
     # SHARED CORE METHODS
 

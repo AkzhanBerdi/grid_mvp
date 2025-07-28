@@ -44,33 +44,101 @@ except ImportError:
 
 
 class GridOrchestrator:
-    """
-    Unified Grid Orchestrator for Single Advanced Grid System
+    """Singleton GridOrchestrator to ensure only one instance exists"""
 
-    Key improvements:
-    - Single manager per client (no dual-grid complexity)
-    - Simplified command processing
-    - 100% capital utilization
-    - Enhanced monitoring and reporting
-    - Streamlined client management
-    """
+    _instance = None
+    _initialized = False
+
+    def __new__(cls):
+        """Singleton pattern - always return the same instance"""
+        if cls._instance is None:
+            cls._instance = super(GridOrchestrator, cls).__new__(cls)
+        return cls._instance
 
     def __init__(self):
+        """Initialize only once, even if called multiple times"""
+        # Prevent re-initialization
+        if GridOrchestrator._initialized:
+            self.logger.info(
+                f"🔄 GridOrchestrator already initialized - returning existing instance ID: {id(self)}"
+            )
+            return
+
+        import time
+        import traceback
+        from typing import Dict
+
+        from binance.client import Client
+
+        # Import required services
+        from services.single_advanced_grid_manager import SingleAdvancedGridManager
+
+        # Initialize logging first
         self.logger = logging.getLogger(__name__)
 
-        # Core services
+        # Track creation details
+        self.creation_time = time.time()
+        self.creation_id = id(self)
+
+        # Log the instance creation with detailed info
+        instance_id = id(self)
+        self.logger.info(f"🎯 GridOrchestrator singleton created - ID: {instance_id}")
+        self.logger.error(
+            f"🎯 SINGLETON GridOrchestrator created! ID: {self.creation_id}"
+        )
+        print(f"🎯 SINGLETON GridOrchestrator created! ID: {self.creation_id}")
+
+        # Initialize core services
         self.client_repo = ClientRepository()
         self.crypto_utils = CryptoUtils()
 
-        # Single Advanced Grid Managers (one per client)
-        self.advanced_managers: Dict[int, SingleAdvancedGridManager] = {}
+        # Create debug-enabled dictionary for managers
+        class DebugDict(dict):
+            def __init__(self, logger):
+                super().__init__()
+                self.logger = logger
 
-        # Binance clients cache (matches your existing pattern)
+            def __delitem__(self, key):
+                self.logger.error(f"🚨 CRITICAL: Manager {key} being DELETED!")
+                print(f"🚨 CRITICAL: Manager {key} being DELETED!")
+                self.logger.error("DELETION Stack trace:")
+                for line in traceback.format_stack():
+                    self.logger.error(line.strip())
+                super().__delitem__(key)
+
+            def clear(self):
+                self.logger.error("🚨 CRITICAL: ALL MANAGERS BEING CLEARED!")
+                print("🚨 CRITICAL: ALL MANAGERS BEING CLEARED!")
+                self.logger.error("CLEAR Stack trace:")
+                for line in traceback.format_stack():
+                    self.logger.error(line.strip())
+                super().clear()
+
+        # Initialize managers dictionary with debug capabilities
+        self.advanced_managers: Dict[int, SingleAdvancedGridManager] = DebugDict(
+            self.logger
+        )
+
+        # Initialize Binance clients cache
         self.binance_clients: Dict[int, Client] = {}
-        self.notification_manager = FIFOMonitoringService()
-        self.last_daily_summary = None
 
-        # Monitoring state
+        # Initialize services
+        try:
+            self.notification_manager = EnhancedFIFOService()
+            self.logger.info("✅ FIFOMonitoringService initialized")
+        except Exception as e:
+            self.logger.error(f"❌ Failed to initialize FIFOMonitoringService: {e}")
+            self.notification_manager = None
+
+        try:
+            self.fifo_service = EnhancedFIFOService()
+            self.logger.info("✅ EnhancedFIFOService initialized")
+        except Exception as e:
+            self.logger.error(f"❌ Failed to initialize EnhancedFIFOService: {e}")
+            self.fifo_service = None
+
+        # Initialize state variables
+        self.last_daily_summary = None
         self.monitoring_active = False
         self.last_health_check = 0
 
@@ -82,9 +150,8 @@ class GridOrchestrator:
             "system_uptime_start": time.time(),
             "last_optimization": 0,
         }
-        self.fifo_service = EnhancedFIFOService()
-        self.last_daily_summary = None
 
+        # Log architecture info
         self.logger.info(
             "🚀 GridOrchestrator initialized for Single Advanced Grid System"
         )
@@ -92,11 +159,107 @@ class GridOrchestrator:
         self.logger.info("   💎 Capital Efficiency: 100% (no dual-grid splits)")
         self.logger.info("   🔧 Management: Simplified unified system")
 
+        # Final confirmation
+        self.logger.error(
+            f"✅ GridOrchestrator {self.creation_id} initialization complete"
+        )
+        print(f"✅ GridOrchestrator {self.creation_id} initialization complete")
+
+        # Mark as initialized
+        GridOrchestrator._initialized = True
+
+    @classmethod
+    def get_instance(cls):
+        """Get the singleton instance"""
+        return cls()
+
+    @classmethod
+    def reset_instance(cls):
+        """Reset singleton (for testing purposes)"""
+        cls._instance = None
+        cls._initialized = False
+
+    # Add debug logging to track instance access
+    def _log_instance_access(self, method_name):
+        instance_id = id(self)
+        self.logger.error(f"🔍 GridOrchestrator {instance_id} - {method_name} accessed")
+
+    def ensure_initialized(self):
+        """Ensure the orchestrator is properly initialized"""
+        if not hasattr(self, "advanced_managers"):
+            raise RuntimeError("GridOrchestrator not properly initialized!")
+
+        if not hasattr(self, "client_repo"):
+            raise RuntimeError("GridOrchestrator missing ClientRepository!")
+
+    # Add this method to get client's Binance client
+    def get_client_binance_client(self, client_id: int) -> Client:
+        """Get or create Binance client for specific client"""
+        if client_id in self.binance_clients:
+            return self.binance_clients[client_id]
+
+        try:
+            client = self.client_repo.get_client(client_id)
+            if (
+                not client
+                or not client.binance_api_key
+                or not client.binance_secret_key
+            ):
+                raise ValueError(f"Client {client_id} missing API credentials")
+
+            # Decrypt credentials
+            decrypted_api_key = self.crypto_utils.decrypt(client.binance_api_key)
+            decrypted_secret = self.crypto_utils.decrypt(client.binance_secret_key)
+
+            # Create Binance client
+            binance_client = Client(decrypted_api_key, decrypted_secret)
+            self.binance_clients[client_id] = binance_client
+
+            self.logger.info(f"✅ Created Binance client for client {client_id}")
+            return binance_client
+
+        except Exception as e:
+            self.logger.error(
+                f"❌ Failed to create Binance client for {client_id}: {e}"
+            )
+            raise
+
+    def __getattribute__(self, name):
+        if name == "advanced_managers":
+            creation_id = super().__getattribute__("creation_id")
+            logger = super().__getattribute__("logger")
+            logger.error(
+                f"🔍 GridOrchestrator {creation_id} - advanced_managers accessed"
+            )
+            print(f"🔍 GridOrchestrator {creation_id} - advanced_managers accessed")
+        return super().__getattribute__(name)
+
+    def __str__(self):
+        """String representation for debugging"""
+        return f"GridOrchestrator(ID={id(self)}, managers={len(self.advanced_managers)}, initialized={self._initialized})"
+
+    def __setitem__(self, key, value):
+        """Debug wrapper to track manager additions"""
+        self.logger.error(f"🔥 DEBUG: Manager {key} being ADDED")
+        print(f"🔥 DEBUG: Manager {key} being ADDED")
+        import traceback
+
+        self.logger.error(f"Stack trace: {traceback.format_stack()[-3:-1]}")
+        super().__setitem__(key, value)
+
+    def __delitem__(self, key):
+        """Debug wrapper to track manager deletions"""
+        self.logger.error(f"🚨 CRITICAL: Manager {key} being DELETED!")
+        print(f"🚨 CRITICAL: Manager {key} being DELETED!")
+        import traceback
+
+        self.logger.error(f"DELETION Stack trace: {traceback.format_stack()}")
+        super().__delitem__(key)
+
     async def create_advanced_manager(self, client_id: int) -> bool:
         """
         Create Single Advanced Grid Manager for client
-
-        Replaces the dual-grid manager creation with simplified single manager
+        FIXED: Use correct constructor parameters
         """
         try:
             if client_id in self.advanced_managers:
@@ -105,18 +268,36 @@ class GridOrchestrator:
                 )
                 return True
 
-            # Get or create Binance client using existing pattern
-            binance_client = await self._get_binance_client(client_id)
+            # Get or create Binance client
+            binance_client = await self._get_or_create_binance_client(client_id)
             if not binance_client:
                 self.logger.error(
-                    f"❌ Failed to create Binance client for client {client_id}"
+                    f"❌ DEBUG: Failed to create Binance client for {client_id}"
                 )
                 return False
 
-            # Create Single Advanced Grid Manager
-            self.advanced_managers[client_id] = SingleAdvancedGridManager(
-                binance_client, client_id
+            self.logger.error(f"✅ DEBUG: Binance client ready for client {client_id}")
+            print(f"✅ DEBUG: Binance client ready for client {client_id}")
+
+            # 🔥 FIX: Create manager with correct parameters (no fifo_service)
+            manager = SingleAdvancedGridManager(
+                binance_client=binance_client, client_id=client_id
             )
+
+            # 🔥 CRITICAL: Actually add to the managers dictionary
+            self.advanced_managers[client_id] = manager
+
+            self.logger.error(
+                f"✅ DEBUG: Manager created and added to dictionary for client {client_id}"
+            )
+            print(
+                f"✅ DEBUG: Manager created and added to dictionary for client {client_id}"
+            )
+
+            self.logger.error(
+                f"✅ DEBUG: Total managers now: {len(self.advanced_managers)}"
+            )
+            print(f"✅ DEBUG: Total managers now: {len(self.advanced_managers)}")
 
             self.logger.info(
                 f"✅ SingleAdvancedGridManager created for client {client_id}"
@@ -129,9 +310,252 @@ class GridOrchestrator:
 
         except Exception as e:
             self.logger.error(
-                f"❌ Failed to create advanced manager for client {client_id}: {e}"
+                f"❌ Advanced manager creation error for client {client_id}: {e}"
             )
+            import traceback
+
+            self.logger.error(f"Full traceback: {traceback.format_exc()}")
             return False
+
+    async def _get_or_create_binance_client(self, client_id: int) -> Optional[Client]:
+        """Get existing or create new Binance client for client - FIXED"""
+        try:
+            # Check if we already have a client
+            if client_id in self.binance_clients:
+                self.logger.error(
+                    f"✅ DEBUG: Using existing Binance client for {client_id}"
+                )
+                print(f"✅ DEBUG: Using existing Binance client for {client_id}")
+                return self.binance_clients[client_id]
+
+            # Get client from repository
+            client = self.client_repo.get_client(client_id)
+            if not client:
+                self.logger.error(
+                    f"❌ DEBUG: Client {client_id} not found in repository"
+                )
+                print(f"❌ DEBUG: Client {client_id} not found in repository")
+                return None
+
+            self.logger.error(f"✅ DEBUG: Client {client_id} found in repository")
+            print(f"✅ DEBUG: Client {client_id} found in repository")
+
+            # Check if client has API keys
+            if not client.binance_api_key or not client.binance_secret_key:
+                self.logger.error(f"❌ DEBUG: Client {client_id} missing API keys")
+                print(f"❌ DEBUG: Client {client_id} missing API keys")
+                return None
+
+            self.logger.error(f"✅ DEBUG: Client {client_id} has encrypted API keys")
+            print(f"✅ DEBUG: Client {client_id} has encrypted API keys")
+
+            # 🔥 FIX: Decrypt the API keys using the repository method
+            try:
+                api_key, secret_key = self.client_repo.get_decrypted_api_keys(client)
+
+                if not api_key or not secret_key:
+                    self.logger.error(
+                        f"❌ DEBUG: Failed to decrypt API keys for client {client_id}"
+                    )
+                    print(
+                        f"❌ DEBUG: Failed to decrypt API keys for client {client_id}"
+                    )
+                    return None
+
+                self.logger.error(
+                    f"✅ DEBUG: Successfully decrypted API keys for client {client_id}"
+                )
+                print(
+                    f"✅ DEBUG: Successfully decrypted API keys for client {client_id}"
+                )
+
+            except Exception as decrypt_error:
+                self.logger.error(
+                    f"❌ DEBUG: API key decryption error for client {client_id}: {decrypt_error}"
+                )
+                print(
+                    f"❌ DEBUG: API key decryption error for client {client_id}: {decrypt_error}"
+                )
+                return None
+
+            # 🔥 FIX: Create Binance client with decrypted keys
+            try:
+                from binance.client import Client as BinanceClient
+
+                binance_client = BinanceClient(
+                    api_key=api_key,
+                    api_secret=secret_key,
+                    testnet=False,  # Set to True if using testnet
+                )
+
+                self.logger.error(
+                    f"✅ DEBUG: Binance client object created for client {client_id}"
+                )
+                print(f"✅ DEBUG: Binance client object created for client {client_id}")
+
+            except Exception as client_error:
+                self.logger.error(
+                    f"❌ DEBUG: Binance client creation error for client {client_id}: {client_error}"
+                )
+                print(
+                    f"❌ DEBUG: Binance client creation error for client {client_id}: {client_error}"
+                )
+                return None
+
+            # Test the connection
+            try:
+                account = binance_client.get_account()
+                self.logger.error(
+                    f"✅ DEBUG: Binance connection test successful for client {client_id}"
+                )
+                print(
+                    f"✅ DEBUG: Binance connection test successful for client {client_id}"
+                )
+
+                # Log account info
+                self.logger.info(f"✅ Binance client created for client {client_id}")
+                self.logger.info(
+                    f"   📊 Account Type: {account.get('accountType', 'Unknown')}"
+                )
+                self.logger.info(f"   🔑 Can Trade: {account.get('canTrade', False)}")
+
+            except Exception as test_error:
+                self.logger.error(
+                    f"❌ DEBUG: Binance connection test failed for client {client_id}: {test_error}"
+                )
+                print(
+                    f"❌ DEBUG: Binance connection test failed for client {client_id}: {test_error}"
+                )
+                return None
+
+            # Cache the client
+            self.binance_clients[client_id] = binance_client
+
+            self.logger.error(f"✅ DEBUG: Binance client cached for client {client_id}")
+            print(f"✅ DEBUG: Binance client cached for client {client_id}")
+
+            return binance_client
+
+        except Exception as e:
+            self.logger.error(
+                f"❌ Binance client creation error for client {client_id}: {e}"
+            )
+            print(f"❌ Binance client creation error for client {client_id}: {e}")
+
+            # Log full traceback for debugging
+            import traceback
+
+            self.logger.error(f"Full traceback: {traceback.format_exc()}")
+
+            return None
+
+    # ALSO ADD: Method to decrypt API secret for the existing crypto_utils usage
+    def decrypt_api_secret(self, encrypted_secret: str) -> str:
+        """Decrypt API secret - for backward compatibility"""
+        return self.crypto_utils.decrypt(encrypted_secret)
+
+    # DEBUGGING: Add this method to test API key decryption independently
+    def debug_api_key_decryption(self, client_id: int):
+        """Debug API key decryption for a specific client"""
+        try:
+            self.logger.error(
+                f"🔍 DEBUG: Testing API key decryption for client {client_id}"
+            )
+            print(f"🔍 DEBUG: Testing API key decryption for client {client_id}")
+
+            # Get client
+            client = self.client_repo.get_client(client_id)
+            if not client:
+                self.logger.error(f"❌ DEBUG: Client {client_id} not found")
+                print(f"❌ DEBUG: Client {client_id} not found")
+                return False
+
+            # Check encrypted keys
+            if client.binance_api_key:
+                self.logger.error(
+                    f"✅ DEBUG: Found encrypted API key (length: {len(client.binance_api_key)})"
+                )
+                print(
+                    f"✅ DEBUG: Found encrypted API key (length: {len(client.binance_api_key)})"
+                )
+            else:
+                self.logger.error("❌ DEBUG: No API key found")
+                print("❌ DEBUG: No API key found")
+                return False
+
+            if client.binance_secret_key:
+                self.logger.error(
+                    f"✅ DEBUG: Found encrypted secret key (length: {len(client.binance_secret_key)})"
+                )
+                print(
+                    f"✅ DEBUG: Found encrypted secret key (length: {len(client.binance_secret_key)})"
+                )
+            else:
+                self.logger.error("❌ DEBUG: No secret key found")
+                print("❌ DEBUG: No secret key found")
+                return False
+
+            # Test decryption
+            api_key, secret_key = self.client_repo.get_decrypted_api_keys(client)
+
+            if api_key and secret_key:
+                self.logger.error("✅ DEBUG: Decryption successful")
+                self.logger.error(f"   API Key: {api_key[:10]}...{api_key[-10:]}")
+                self.logger.error(
+                    f"   Secret Key: {secret_key[:10]}...{secret_key[-10:]}"
+                )
+                print("✅ DEBUG: Decryption successful")
+                return True
+            else:
+                self.logger.error("❌ DEBUG: Decryption failed")
+                print("❌ DEBUG: Decryption failed")
+                return False
+
+        except Exception as e:
+            self.logger.error(f"❌ DEBUG: API key decryption test error: {e}")
+            print(f"❌ DEBUG: API key decryption test error: {e}")
+            return False
+
+    def debug_fifo_service_availability(self):
+        """Debug method to check FIFO service availability"""
+        try:
+            self.logger.error("🔍 DEBUG: Checking FIFO service availability")
+            print("🔍 DEBUG: Checking FIFO service availability")
+
+            # Check if we have a FIFO service
+            if hasattr(self, "fifo_service") and self.fifo_service:
+                self.logger.error("✅ DEBUG: GridOrchestrator has FIFO service")
+                print("✅ DEBUG: GridOrchestrator has FIFO service")
+            else:
+                self.logger.error("❌ DEBUG: GridOrchestrator missing FIFO service")
+                print("❌ DEBUG: GridOrchestrator missing FIFO service")
+                # Create it if missing
+                from services.enhanced_fifo_service import EnhancedFIFOService
+
+                self.fifo_service = EnhancedFIFOService()
+                self.logger.error("✅ DEBUG: Created new FIFO service")
+                print("✅ DEBUG: Created new FIFO service")
+
+            # Check if EnhancedFIFOService can be imported
+            try:
+                from services.enhanced_fifo_service import EnhancedFIFOService
+
+                test_fifo = EnhancedFIFOService()
+                self.logger.error(
+                    "✅ DEBUG: EnhancedFIFOService imports and creates successfully"
+                )
+                print("✅ DEBUG: EnhancedFIFOService imports and creates successfully")
+            except Exception as fifo_error:
+                self.logger.error(
+                    f"❌ DEBUG: EnhancedFIFOService import/creation error: {fifo_error}"
+                )
+                print(
+                    f"❌ DEBUG: EnhancedFIFOService import/creation error: {fifo_error}"
+                )
+
+        except Exception as e:
+            self.logger.error(f"❌ DEBUG: FIFO service check error: {e}")
+            print(f"❌ DEBUG: FIFO service check error: {e}")
 
     async def _get_binance_client(self, client_id: int) -> Optional[Client]:
         """Get or create Binance client using existing pattern from your system"""
@@ -199,11 +623,42 @@ class GridOrchestrator:
 
             # Ensure advanced manager exists
             if not await self.create_advanced_manager(client_id):
+                self.logger.error(
+                    f"❌ DEBUG: Failed to create manager for client {client_id}"
+                )
+                print(f"❌ DEBUG: Failed to create manager for client {client_id}")
                 return {"success": False, "error": "Failed to create advanced manager"}
 
-            # Execute force command through SingleAdvancedGridManager
+            self.logger.error(
+                f"✅ DEBUG: Manager created/exists for client {client_id}"
+            )
+            print(f"✅ DEBUG: Manager created/exists for client {client_id}")
+
+            self.logger.error(
+                f"🚨 DEBUG: Current managers count: {len(self.advanced_managers)}"
+            )
+            print(f"🚨 DEBUG: Current managers count: {len(self.advanced_managers)}")
+
+            # 🔥 FIX: Get manager reference in proper scope
             manager = self.advanced_managers[client_id]
+
+            # Execute force command through SingleAdvancedGridManager
+            self.logger.error(
+                f"🔥 DEBUG: About to call handle_force_command for client {client_id}"
+            )
+            print(
+                f"🔥 DEBUG: About to call handle_force_command for client {client_id}"
+            )
+            self._log_instance_access("handle_force_command")
+            self.ensure_initialized()
             result = await manager.handle_force_command(command)
+
+            self.logger.error(
+                f"✅ DEBUG: handle_force_command completed for client {client_id}: success={result.get('success', False)}"
+            )
+            print(
+                f"✅ DEBUG: handle_force_command completed for client {client_id}: success={result.get('success', False)}"
+            )
 
             if result["success"]:
                 # Update client status
@@ -215,6 +670,14 @@ class GridOrchestrator:
                 # Update system metrics
                 self.system_metrics["total_grids_started"] += 1
                 self.system_metrics["total_force_commands"] += 1
+
+                # After manager.handle_force_command(command), add:
+                self.logger.error(
+                    f"✅ DEBUG: Manager {client_id} now has {len(manager.active_grids)} active grids"
+                )
+                print(
+                    f"✅ DEBUG: Manager {client_id} now has {len(manager.active_grids)} active grids"
+                )
 
                 # Enhanced success logging
                 self.logger.info(f"🎉 FORCE COMMAND SUCCESS for client {client_id}:")
@@ -348,62 +811,9 @@ class GridOrchestrator:
             self.logger.error(f"❌ Stop all grids error for client {client_id}: {e}")
             return {"success": False, "error": str(e)}
 
-    def get_all_active_grids(self) -> Dict:
-        """Get status of all active single advanced grids across all clients"""
-        all_grids = {}
-        system_summary = {
-            "total_clients": len(self.advanced_managers),
-            "total_active_grids": 0,
-            "total_capital_deployed": 0.0,
-            "architecture": "Single Advanced Grid System",
-            "efficiency": "100% - No dual-grid overhead",
-        }
-
-        for client_id, manager in self.advanced_managers.items():
-            try:
-                client_grids = manager.get_all_active_grids()
-                if client_grids.get("grids"):
-                    all_grids[client_id] = {
-                        "client_id": client_id,
-                        "trading_mode": client_grids.get(
-                            "trading_mode", "Single Advanced Grid"
-                        ),
-                        "grids": client_grids["grids"],
-                        "client_metrics": client_grids.get("global_metrics", {}),
-                        "system_efficiency": client_grids.get(
-                            "system_efficiency", "Maximized"
-                        ),
-                    }
-
-                    # Aggregate system metrics
-                    system_summary["total_active_grids"] += len(client_grids["grids"])
-
-                    # Calculate total capital deployed
-                    for grid_data in client_grids["grids"].values():
-                        grid_details = grid_data.get("grid_details", {})
-                        if "total_capital" in grid_details:
-                            system_summary["total_capital_deployed"] += grid_details[
-                                "total_capital"
-                            ]
-
-            except Exception as e:
-                self.logger.error(f"❌ Failed to get grids for client {client_id}: {e}")
-
-        return {
-            "system_summary": system_summary,
-            "client_grids": all_grids,
-            "system_metrics": self.system_metrics,
-            "architecture_benefits": [
-                "100% capital allocation efficiency",
-                "Simplified management (no dual-grid coordination)",
-                "Maximum advanced features utilization",
-                "Unified performance monitoring",
-                "Streamlined command interface",
-            ],
-        }
-
     async def get_client_status(self, client_id: int) -> Dict:
         """Get comprehensive status for specific client"""
+        self.ensure_initialized()
         try:
             if client_id not in self.advanced_managers:
                 return {
@@ -733,39 +1143,26 @@ class GridOrchestrator:
         }
 
     async def cleanup_inactive_managers(self):
-        """Clean up managers for clients with no active grids"""
+        """Clean up managers for clients with no active grids - DISABLED FOR DEBUG"""
         try:
-            inactive_clients = []
+            self.logger.error(
+                "🔍 DEBUG: cleanup_inactive_managers called - TEMPORARILY DISABLED"
+            )
+            print("🔍 DEBUG: cleanup_inactive_managers called - TEMPORARILY DISABLED")
 
-            for client_id, manager in self.advanced_managers.items():
-                try:
-                    all_grids = manager.get_all_active_grids()
-                    if not all_grids.get("grids"):
-                        inactive_clients.append(client_id)
-                except Exception as e:
-                    self.logger.warning(
-                        f"⚠️ Cleanup check failed for client {client_id}: {e}"
-                    )
-                    inactive_clients.append(client_id)
+            # TEMPORARY DISABLE: Don't actually clean up managers during debugging
+            return
 
-            # Remove inactive managers
-            for client_id in inactive_clients:
-                try:
-                    del self.advanced_managers[client_id]
-                    if client_id in self.binance_clients:
-                        del self.binance_clients[client_id]
-
-                    self.logger.info(
-                        f"🧹 Cleaned up inactive manager for client {client_id}"
-                    )
-
-                except Exception as e:
-                    self.logger.error(f"❌ Cleanup error for client {client_id}: {e}")
-
-            if inactive_clients:
-                self.logger.info(
-                    f"🧹 Cleanup completed: {len(inactive_clients)} inactive managers removed"
-                )
+            # Original code commented out for debugging:
+            # inactive_clients = []
+            # for client_id, manager in self.advanced_managers.items():
+            #     try:
+            #         all_grids = manager.get_all_active_grids()
+            #         if not all_grids.get("grids"):
+            #             inactive_clients.append(client_id)
+            #     except Exception as e:
+            #         self.logger.warning(f"⚠️ Cleanup check failed for client {client_id}: {e}")
+            #         inactive_clients.append(client_id)
 
         except Exception as e:
             self.logger.error(f"❌ Manager cleanup error: {e}")
@@ -822,87 +1219,247 @@ class GridOrchestrator:
                 "capital": capital,
             }
 
-    async def update_all_grids(self) -> Dict:
-        """
-        Compatibility method for grid monitoring
-        Maps to the new monitoring system
-        """
+    def get_all_active_grids(self) -> Dict:
+        self._log_instance_access("get_all_active_grids")
+        self.ensure_initialized()
+        """Get status of all active single advanced grids across all clients"""
         try:
+            self.logger.error(
+                "🔍 DEBUG: GridOrchestrator.get_all_active_grids() called"
+            )
+            print("🔍 DEBUG: GridOrchestrator.get_all_active_grids() called")
+
+            all_grids = {}
+            system_summary = {
+                "total_clients": len(self.advanced_managers),
+                "total_active_grids": 0,
+                "total_capital_deployed": 0.0,
+                "architecture": "Single Advanced Grid System",
+                "efficiency": "100% - No dual-grid overhead",
+            }
+
+            self.logger.error(
+                f"🔍 DEBUG: Processing {len(self.advanced_managers)} managers"
+            )
+            print(f"🔍 DEBUG: Processing {len(self.advanced_managers)} managers")
+
+            for client_id, manager in self.advanced_managers.items():
+                try:
+                    self.logger.error(f"🔍 DEBUG: Getting grids for client {client_id}")
+                    print(f"🔍 DEBUG: Getting grids for client {client_id}")
+
+                    client_grids = manager.get_all_active_grids()
+
+                    self.logger.error(
+                        f"🔍 DEBUG: Client {client_id} returned {len(client_grids.get('grids', {}))} grids"
+                    )
+                    print(
+                        f"🔍 DEBUG: Client {client_id} returned {len(client_grids.get('grids', {}))} grids"
+                    )
+
+                    if client_grids.get("grids"):
+                        all_grids[client_id] = {
+                            "client_id": client_id,
+                            "trading_mode": client_grids.get(
+                                "trading_mode", "Single Advanced Grid"
+                            ),
+                            "grids": client_grids["grids"],
+                            "client_metrics": client_grids.get("global_metrics", {}),
+                            "system_efficiency": client_grids.get(
+                                "system_efficiency", "Maximized"
+                            ),
+                        }
+
+                        # Aggregate system metrics
+                        system_summary["total_active_grids"] += len(
+                            client_grids["grids"]
+                        )
+
+                        # Calculate total capital deployed
+                        for grid_data in client_grids["grids"].values():
+                            grid_details = grid_data.get("grid_details", {})
+                            if "total_capital" in grid_details:
+                                system_summary["total_capital_deployed"] += (
+                                    grid_details["total_capital"]
+                                )
+
+                except Exception as e:
+                    self.logger.error(
+                        f"❌ Failed to get grids for client {client_id}: {e}"
+                    )
+                    print(f"❌ DEBUG: Failed to get grids for client {client_id}: {e}")
+
+            self.logger.error(
+                f"✅ DEBUG: GridOrchestrator returning {system_summary['total_active_grids']} total active grids"
+            )
+            print(
+                f"✅ DEBUG: GridOrchestrator returning {system_summary['total_active_grids']} total active grids"
+            )
+
+            return {
+                "system_summary": system_summary,
+                "client_grids": all_grids,
+                "system_metrics": self.system_metrics,
+                "architecture_benefits": [
+                    "100% capital allocation efficiency",
+                    "Simplified management (no dual-grid coordination)",
+                    "Maximum advanced features utilization",
+                    "Unified performance monitoring",
+                    "Streamlined command interface",
+                ],
+            }
+
+        except Exception as e:
+            self.logger.error(f"❌ GridOrchestrator.get_all_active_grids error: {e}")
+            print(f"❌ DEBUG: GridOrchestrator.get_all_active_grids error: {e}")
+            import traceback
+
+            self.logger.error(f"Full traceback: {traceback.format_exc()}")
+            return {
+                "system_summary": {
+                    "total_clients": 0,
+                    "total_active_grids": 0,
+                    "total_capital_deployed": 0.0,
+                    "architecture": "Single Advanced Grid System",
+                    "efficiency": "Error occurred",
+                },
+                "client_grids": {},
+                "error": str(e),
+            }
+
+    async def update_all_grids(self) -> Dict:
+        """DEBUG VERSION with manager count monitoring"""
+        self._log_instance_access("update_all_grids")
+
+        try:
+            # Check manager count at start
+            start_count = len(self.advanced_managers)
+            self.logger.error(
+                f"🔍 DEBUG: update_all_grids START - {start_count} managers"
+            )
+            print(f"🔍 DEBUG: update_all_grids START - {start_count} managers")
+
+            self.logger.error("🚨 DEBUG: update_all_grids() CALLED")
+            print("🚨 DEBUG: update_all_grids() CALLED")
+
             self.logger.info("🔄 Compatibility call: update_all_grids()")
+
+            # Check if we have any managers
+            self.logger.error(f"🚨 DEBUG: Found {len(self.advanced_managers)} managers")
+            print(f"🚨 DEBUG: Found {len(self.advanced_managers)} managers")
+
+            if not self.advanced_managers:
+                self.logger.error("🚨 DEBUG: NO ADVANCED MANAGERS FOUND!")
+                print("🚨 DEBUG: NO ADVANCED MANAGERS FOUND!")
+                return {
+                    "success": False,
+                    "error": "No advanced managers",
+                    "updated_grids": 0,
+                    "total_clients": 0,
+                    "monitoring_active": self.monitoring_active,
+                }
+
+            # Check each manager before monitoring
+            for client_id, manager in self.advanced_managers.items():
+                try:
+                    active_grids_count = len(manager.active_grids)
+                    self.logger.error(
+                        f"🔍 DEBUG: Client {client_id} has {active_grids_count} active grids"
+                    )
+                    print(
+                        f"🔍 DEBUG: Client {client_id} has {active_grids_count} active grids"
+                    )
+
+                    if active_grids_count > 0:
+                        grid_symbols = list(manager.active_grids.keys())
+                        self.logger.error(f"   Grid symbols: {grid_symbols}")
+                        print(f"   Grid symbols: {grid_symbols}")
+
+                except Exception as check_error:
+                    self.logger.error(
+                        f"❌ DEBUG: Error checking manager {client_id}: {check_error}"
+                    )
+                    print(
+                        f"❌ DEBUG: Error checking manager {client_id}: {check_error}"
+                    )
 
             # Start monitoring if not already active
             if not self.monitoring_active:
+                self.logger.error("🚨 DEBUG: Starting monitoring task")
+                print("🚨 DEBUG: Starting monitoring task")
                 asyncio.create_task(self.start_monitoring())
+
+            # Check manager count before get_all_active_grids
+            mid_count = len(self.advanced_managers)
+            self.logger.error(
+                f"🔍 DEBUG: Before get_all_active_grids - {mid_count} managers"
+            )
+            print(f"🔍 DEBUG: Before get_all_active_grids - {mid_count} managers")
 
             # Get current status of all grids
             all_grids = self.get_all_active_grids()
 
+            # Check manager count after get_all_active_grids
+            after_get_count = len(self.advanced_managers)
+            self.logger.error(
+                f"🔍 DEBUG: After get_all_active_grids - {after_get_count} managers"
+            )
+            print(f"🔍 DEBUG: After get_all_active_grids - {after_get_count} managers")
+
             # Update each active grid
             updated_grids = 0
-            for client_id, manager in self.advanced_managers.items():
+            for client_id, manager in list(
+                self.advanced_managers.items()
+            ):  # Use list() to avoid dict change during iteration
                 try:
+                    self.logger.error(
+                        f"🚨 DEBUG: Calling monitor_and_update_grids() for client {client_id}"
+                    )
+                    print(
+                        f"🚨 DEBUG: Calling monitor_and_update_grids() for client {client_id}"
+                    )
+
                     await manager.monitor_and_update_grids()
                     updated_grids += 1
-                except Exception as e:
-                    self.logger.error(f"❌ Update error for client {client_id}: {e}")
 
-            await self.check_and_send_daily_summaries()
+                    self.logger.error(
+                        f"✅ DEBUG: Successfully updated grids for client {client_id}"
+                    )
+                    print(
+                        f"✅ DEBUG: Successfully updated grids for client {client_id}"
+                    )
+
+                except Exception as e:
+                    self.logger.error(
+                        f"❌ DEBUG: Update error for client {client_id}: {e}"
+                    )
+                    print(f"❌ DEBUG: Update error for client {client_id}: {e}")
+
+            # Check final manager count
+            end_count = len(self.advanced_managers)
+            self.logger.error(f"🔍 DEBUG: update_all_grids END - {end_count} managers")
+            print(f"🔍 DEBUG: update_all_grids END - {end_count} managers")
+
+            if start_count != end_count:
+                self.logger.error(
+                    f"🚨 CRITICAL: Manager count changed from {start_count} to {end_count}!"
+                )
+                print(
+                    f"🚨 CRITICAL: Manager count changed from {start_count} to {end_count}!"
+                )
 
             return {
                 "success": True,
                 "updated_grids": updated_grids,
                 "total_clients": len(self.advanced_managers),
                 "monitoring_active": self.monitoring_active,
-                "system_summary": all_grids.get("system_summary", {}),
                 "message": f"Updated {updated_grids} grids across {len(self.advanced_managers)} clients",
             }
 
         except Exception as e:
-            self.logger.error(f"❌ Compatibility update_all_grids error: {e}")
+            self.logger.error(f"❌ DEBUG: Compatibility update_all_grids error: {e}")
+            print(f"❌ DEBUG: Compatibility update_all_grids error: {e}")
             return {"success": False, "error": str(e), "updated_grids": 0}
-
-    async def get_client_grid_status(self, client_id: int, symbol: str = None) -> Dict:
-        """
-        Compatibility method for getting grid status
-        Maps to new single grid status methods
-        """
-        try:
-            if client_id not in self.advanced_managers:
-                return {
-                    "success": False,
-                    "error": "No active manager for client",
-                    "client_id": client_id,
-                }
-
-            manager = self.advanced_managers[client_id]
-
-            if symbol:
-                # Get specific symbol status
-                status = manager.get_single_grid_status(symbol)
-                return {
-                    "success": status.get("active", False),
-                    "client_id": client_id,
-                    "symbol": symbol,
-                    "grid_status": status,
-                    "strategy": "Single Advanced Grid",
-                }
-            else:
-                # Get all grids for client
-                all_grids = manager.get_all_active_grids()
-                return {
-                    "success": True,
-                    "client_id": client_id,
-                    "total_grids": all_grids.get("total_active_grids", 0),
-                    "grids": all_grids.get("grids", {}),
-                    "strategy": "Single Advanced Grid",
-                    "system_efficiency": all_grids.get(
-                        "system_efficiency", "Maximized"
-                    ),
-                }
-
-        except Exception as e:
-            self.logger.error(f"❌ Compatibility get_client_grid_status error: {e}")
-            return {"success": False, "error": str(e), "client_id": client_id}
 
     async def stop_client_grid(self, client_id: int, symbol: str) -> Dict:
         """
@@ -1063,3 +1620,68 @@ class GridOrchestrator:
 
         except Exception as e:
             self.logger.error(f"Error notifying trade completion: {e}")
+
+    def debug_advanced_managers(self):
+        """Debug method to check advanced managers state"""
+        self.logger.error("🚨 DEBUG MANAGERS CHECK:")
+        print("🚨 DEBUG MANAGERS CHECK:")
+
+        self.logger.error(f"   Total managers: {len(self.advanced_managers)}")
+        print(f"   Total managers: {len(self.advanced_managers)}")
+
+        for client_id, manager in self.advanced_managers.items():
+            active_grids = manager.get_all_active_grids()
+            grid_count = len(active_grids.get("grids", {}))
+
+            self.logger.error(f"   Client {client_id}: {grid_count} active grids")
+            print(f"   Client {client_id}: {grid_count} active grids")
+
+            if grid_count > 0:
+                symbols = list(active_grids.get("grids", {}).keys())
+                self.logger.error(f"     Symbols: {symbols}")
+                print(f"     Symbols: {symbols}")
+
+    def debug_manager_persistence(self, client_id: int):
+        """Debug method to check if manager persists"""
+        try:
+            self.logger.error(
+                f"🔍 DEBUG: Checking manager persistence for client {client_id}"
+            )
+            print(f"🔍 DEBUG: Checking manager persistence for client {client_id}")
+
+            if client_id in self.advanced_managers:
+                manager = self.advanced_managers[client_id]
+                active_count = len(manager.active_grids)
+
+                self.logger.error(
+                    f"✅ DEBUG: Manager exists with {active_count} active grids"
+                )
+                print(f"✅ DEBUG: Manager exists with {active_count} active grids")
+
+                if active_count > 0:
+                    symbols = list(manager.active_grids.keys())
+                    self.logger.error(f"   Symbols: {symbols}")
+                    print(f"   Symbols: {symbols}")
+
+                    # Test get_all_active_grids
+                    all_grids = manager.get_all_active_grids()
+                    grids_returned = len(all_grids.get("grids", {}))
+                    self.logger.error(
+                        f"   get_all_active_grids returns: {grids_returned} grids"
+                    )
+                    print(f"   get_all_active_grids returns: {grids_returned} grids")
+
+                    return True
+                else:
+                    self.logger.error("⚠️ DEBUG: Manager exists but no active grids")
+                    print("⚠️ DEBUG: Manager exists but no active grids")
+                    return False
+            else:
+                self.logger.error(f"❌ DEBUG: Manager not found for client {client_id}")
+                print(f"❌ DEBUG: Manager not found for client {client_id}")
+                return False
+
+        except Exception as e:
+            self.logger.error(f"❌ DEBUG: Manager persistence check error: {e}")
+            print(f"❌ DEBUG: Manager persistence check error: {e}")
+            return False

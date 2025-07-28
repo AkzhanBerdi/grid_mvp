@@ -34,7 +34,12 @@ class GridTradingService:
 
         # Initialize components
         self.db_setup = DatabaseSetup()
+        print(f"🔍 About to create GridOrchestrator at {datetime.now()}")
         self.grid_orchestrator = GridOrchestrator()
+        print(f"✅ GridOrchestrator created: {id(self.grid_orchestrator)}")
+        self.logger.info(
+            f"🎯 Main.py using GridOrchestrator instance ID: {id(self.grid_orchestrator)}"
+        )
         self.handler = ClientHandler()
         self.network_recovery = EnhancedNetworkRecovery()
         self.fifo_monitoring_service = FIFOMonitoringService()
@@ -228,13 +233,16 @@ class GridTradingService:
 
                 # Enhanced status logging
                 try:
-                    active_grids = self.grid_orchestrator.get_all_active_grids()
-                    if active_grids:
+                    grids_data = self.grid_orchestrator.get_all_active_grids()
+                    if grids_data and "system_summary" in grids_data:
+                        total_grids = grids_data["system_summary"]["total_active_grids"]
                         health_status = self.network_recovery.get_health_status()
                         self.logger.info(
-                            f"📊 Managing {len(active_grids)} active grids - "
+                            f"📊 Managing {total_grids} active grids - "
                             f"Network Health: {health_status['status']} ({health_status['uptime_percentage']:.1f}% uptime)"
                         )
+                    else:
+                        self.logger.info("📊 No active grids currently")
                 except Exception as e:
                     self.logger.error(f"Error getting grid status: {e}")
 
@@ -520,14 +528,19 @@ class GridTradingService:
             # Enhanced network health
             health_status = self.network_recovery.get_health_status()
 
+            # 🔧 UPDATED: Fix the active grids counting
             active_grids = 0
             try:
-                grids = self.grid_orchestrator.get_all_active_grids()
-                active_grids = len(grids) if grids else 0
-            except Exception:
-                pass
+                grids_data = self.grid_orchestrator.get_all_active_grids()
+                if grids_data and "system_summary" in grids_data:
+                    active_grids = grids_data["system_summary"]["total_active_grids"]
+                else:
+                    active_grids = 0
+            except Exception as e:
+                self.logger.error(f"Error getting active grids count: {e}")
+                active_grids = 0
 
-            # Get FIFO monitoring status
+            # Get FIFO monitoring status (KEEP THIS UNCHANGED)
             fifo_monitors = 0
             try:
                 if hasattr(self.fifo_monitoring_service, "monitors"):
@@ -535,6 +548,7 @@ class GridTradingService:
             except Exception:
                 pass
 
+            # KEEP ALL THIS UNCHANGED
             return {
                 "running": self.running,
                 "network_health": health_status,

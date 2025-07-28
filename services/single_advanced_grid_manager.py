@@ -577,77 +577,71 @@ class SingleAdvancedGridManager:
             return {"success": False, "error": str(e)}
 
     async def monitor_and_update_grids(self):
-        """Enhanced monitoring with automatic diagnostics"""
+        """DEBUG VERSION: Enhanced monitoring with debug logging"""
         try:
+            # 🔥 FORCE DEBUG LOG AT START
+            self.logger.error(
+                f"🚨 DEBUG: monitor_and_update_grids() CALLED with {len(self.active_grids)} grids"
+            )
+            print(
+                f"🚨 DEBUG: monitor_and_update_grids() CALLED with {len(self.active_grids)} grids"
+            )
+
+            if not self.active_grids:
+                self.logger.error("🚨 DEBUG: No active grids found!")
+                print("🚨 DEBUG: No active grids found!")
+                return
+
             for symbol in list(self.active_grids.keys()):
                 try:
+                    self.logger.error(f"🚨 DEBUG: Processing {symbol}")
+                    print(f"🚨 DEBUG: Processing {symbol}")
+
                     grid_config = self.active_grids[symbol]
 
                     # 🔥 CRITICAL FIX: Add the missing order monitoring call
-                    self.logger.debug(f"🔍 Checking filled orders for {symbol}")
-                    await self.trading_engine.check_and_replace_filled_orders(
-                        symbol, grid_config
+                    self.logger.error(
+                        f"🚨 DEBUG: About to check filled orders for {symbol}"
                     )
+                    print(f"🚨 DEBUG: About to check filled orders for {symbol}")
 
-                    # Count orders after monitoring (existing code)
+                    try:
+                        await self.trading_engine.check_and_replace_filled_orders(
+                            symbol, grid_config
+                        )
+                        self.logger.error(
+                            f"✅ DEBUG: Successfully checked filled orders for {symbol}"
+                        )
+                        print(
+                            f"✅ DEBUG: Successfully checked filled orders for {symbol}"
+                        )
+                    except Exception as e:
+                        self.logger.error(
+                            f"❌ DEBUG: Failed to check filled orders for {symbol}: {e}"
+                        )
+                        print(
+                            f"❌ DEBUG: Failed to check filled orders for {symbol}: {e}"
+                        )
+
+                    # Count orders after monitoring
                     active_orders = sum(
                         1
                         for level in grid_config.buy_levels + grid_config.sell_levels
                         if level.get("order_id") and not level.get("filled")
                     )
 
-                    # Log order status
-                    self.logger.info(
-                        f"📊 {symbol}: {active_orders} active orders after monitoring"
+                    self.logger.error(
+                        f"📊 DEBUG: {symbol} has {active_orders} active orders"
                     )
-
-                    # If order count is low, run diagnostic (existing code)
-                    if active_orders < 8:  # Should have ~10 orders
-                        self.logger.warning(
-                            f"⚠️ Low order count for {symbol}: {active_orders}"
-                        )
-
-                        # Run diagnostic (keep your existing diagnostic code if you have it)
-                        if hasattr(self, "diagnostic_service"):
-                            diagnosis = await self.diagnostic_service.diagnose_order_replacement_issues(
-                                symbol
-                            )
-
-                            if diagnosis.get("issues_found"):
-                                self.logger.error(
-                                    f"🚨 Diagnostic found issues for {symbol}:"
-                                )
-                                for issue in diagnosis["issues_found"]:
-                                    self.logger.error(
-                                        f"   • {issue['issue']}: {issue['details']}"
-                                    )
-
-                    # Update other systems (keep your existing update calls if you have them)
-                    try:
-                        await self._update_compound_management(symbol)
-                    except:
-                        pass  # Don't break if this method doesn't exist
-
-                    try:
-                        await self._check_volatility_adjustments(symbol)
-                    except:
-                        pass  # Don't break if this method doesn't exist
-
-                    try:
-                        await self._check_smart_auto_reset(symbol)
-                    except:
-                        pass  # Don't break if this method doesn't exist
-
-                    try:
-                        await self._update_performance_tracking(symbol, grid_config)
-                    except:
-                        pass  # Don't break if this method doesn't exist
+                    print(f"📊 DEBUG: {symbol} has {active_orders} active orders")
 
                 except Exception as e:
-                    self.logger.error(f"❌ Monitoring error for {symbol}: {e}")
+                    self.logger.error(f"❌ DEBUG: Error processing {symbol}: {e}")
+                    print(f"❌ DEBUG: Error processing {symbol}: {e}")
 
         except Exception as e:
-            self.logger.error(f"❌ Grid monitoring system error: {e}")
+            self.logger.error(f"❌ DEBUG: Grid monitoring system error: {e}")
+            print(f"❌ DEBUG: Grid monitoring system error: {e}")
 
     async def _get_current_price_with_precision(self, symbol: str) -> Optional[float]:
         """Get current price with precision handling"""
@@ -1001,22 +995,68 @@ class SingleAdvancedGridManager:
             return {"active": False, "error": str(e)}
 
     def get_all_active_grids(self) -> Dict:
-        """Get status of all active single advanced grids"""
+        """Get status of all active single advanced grids - DEBUG VERSION"""
         try:
+            self.logger.error(
+                f"🔍 DEBUG: get_all_active_grids called, active_grids count: {len(self.active_grids)}"
+            )
+            print(
+                f"🔍 DEBUG: get_all_active_grids called, active_grids count: {len(self.active_grids)}"
+            )
+
+            if not self.active_grids:
+                self.logger.error("❌ DEBUG: No active grids in self.active_grids")
+                print("❌ DEBUG: No active grids in self.active_grids")
+                return {
+                    "total_active_grids": 0,
+                    "trading_mode": "Single Advanced Grid",
+                    "grids": {},
+                    "error": "No active grids",
+                }
+
+            self.logger.error(
+                f"✅ DEBUG: Active grids symbols: {list(self.active_grids.keys())}"
+            )
+            print(f"✅ DEBUG: Active grids symbols: {list(self.active_grids.keys())}")
+
             base_status = self.monitoring.get_all_active_grids_status(self.active_grids)
 
-            # 🔥 NEW - Add trading engine statistics for each grid
+            self.logger.error(
+                f"🔍 DEBUG: Monitoring returned base_status with {len(base_status.get('grids', {}))} grids"
+            )
+            print(
+                f"🔍 DEBUG: Monitoring returned base_status with {len(base_status.get('grids', {}))} grids"
+            )
+
+            # Add trading engine statistics for each grid
             for symbol in self.active_grids:
                 if symbol in base_status.get("grids", {}):
-                    trading_stats = self.trading_engine.get_trading_stats(
-                        symbol, self.active_grids[symbol]
-                    )
-                    base_status["grids"][symbol].update(trading_stats)
+                    try:
+                        trading_stats = self.trading_engine.get_trading_stats(
+                            symbol, self.active_grids[symbol]
+                        )
+                        base_status["grids"][symbol].update(trading_stats)
+                        self.logger.error(f"✅ DEBUG: Added trading stats for {symbol}")
+                    except Exception as stats_error:
+                        self.logger.error(
+                            f"⚠️ DEBUG: Failed to get trading stats for {symbol}: {stats_error}"
+                        )
+
+            self.logger.error(
+                f"✅ DEBUG: Final result has {len(base_status.get('grids', {}))} grids"
+            )
+            print(
+                f"✅ DEBUG: Final result has {len(base_status.get('grids', {}))} grids"
+            )
 
             return base_status
 
         except Exception as e:
             self.logger.error(f"❌ All grids status error: {e}")
+            print(f"❌ DEBUG: get_all_active_grids error: {e}")
+            import traceback
+
+            self.logger.error(f"Full traceback: {traceback.format_exc()}")
             return {
                 "total_active_grids": 0,
                 "trading_mode": "Single Advanced Grid",

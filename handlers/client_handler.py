@@ -17,9 +17,9 @@ class ClientHandler(BaseClientHandler):
 
         # Initialize FIFO service for dashboard integration
         try:
-            from services.fifo_service import FIFOService
+            from services.enhanced_fifo_service import EnhancedFIFOService
 
-            self.fifo_service = FIFOService()
+            self.fifo_service = EnhancedFIFOService()
         except ImportError:
             self.logger.warning("FIFO service not available")
             self.fifo_service = None
