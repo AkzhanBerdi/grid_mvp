@@ -14,6 +14,7 @@ class GridConfig:
     symbol: str
     client_id: int
     grid_spacing: float = 0.025  # 2.5%
+    total_capital: float = 0.0  # 🔧 ADD THIS LINE
     grid_levels: int = 8
     order_size: float = 50.0  # USD per order
     center_price: float = 0.0

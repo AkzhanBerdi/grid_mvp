@@ -25,7 +25,7 @@ from services.trading_features import (
 class GridManager:
     """Clean single advanced grid manager with proper inventory integration"""
 
-    def __init__(self, binance_client: Client, client_id: int):
+    def __init__(self, binance_client: Client, client_id: int, fifo_service=None):
         self.binance_client = binance_client
         self.client_id = client_id
         self.logger = logging.getLogger(__name__)
@@ -33,7 +33,13 @@ class GridManager:
         # Core services
         self.client_repo = ClientRepository()
         self.trade_repo = TradeRepository()
-        self.fifo_service = FIFOService()
+
+        if fifo_service:
+            self.fifo_service = fifo_service  # ✅ Use shared instance
+            self.logger.info("✅ Using shared FIFO service")
+        else:
+            self.fifo_service = FIFOService()  # Fallback for direct usage
+            self.logger.info("⚠️ Created new FIFO service instance")
 
         # Trading engine (handles all order operations)
         self.trading_engine = GridTradingEngine(binance_client, client_id)
@@ -375,7 +381,7 @@ class GridManager:
     ) -> Optional[GridConfig]:
         """Create optimized grid configuration"""
         try:
-            self.logger.info("🧮 Calculating optimal grid for {symbol}")
+            self.logger.info(f"🧮 Calculating optimal grid for {symbol}")
 
             asset_config = self.asset_configs.get(
                 symbol,
@@ -387,11 +393,19 @@ class GridManager:
                 },
             )
 
-            # Create grid config
-            grid_config = GridConfig(symbol, total_capital, asset_config)
+            # 🔧 FIXED: Correct parameter order for GridConfig
+            grid_config = GridConfig(
+                symbol,  # symbol
+                self.client_id,  # client_id
+                asset_config.get("grid_spacing_base", 0.025),  # grid_spacing
+                total_capital,  # total_capital
+                asset_config.get("grid_levels", 8),  # grid_levels
+                total_capital / 16,  # order_size
+            )
+
             grid_config.center_price = current_price
 
-            # Calculate optimal parameters
+            # Rest of your method stays the same...
             optimal_config = await self._calculate_optimal_parameters(
                 symbol, current_price, total_capital, asset_config
             )
@@ -399,6 +413,8 @@ class GridManager:
             # Apply optimal parameters
             grid_config.base_order_size = optimal_config["base_order_size"]
             grid_config.grid_spacing = optimal_config["grid_spacing"]
+
+            # Add compound/volatility attributes
             grid_config.compound_multiplier = optimal_config.get(
                 "compound_multiplier", 1.0
             )
@@ -406,17 +422,14 @@ class GridManager:
                 "volatility_regime", "moderate"
             )
 
-            self.logger.info("🔍 Parameters being passed:")
-            self.logger.info(f"   grid_config type: {type(grid_config)}")
-            self.logger.info(f"   current_price type: {type(current_price)}")
-            self.logger.info(f"   optimal_config type: {type(optimal_config)}")
-
             # Create grid levels
             await self.trading_engine.create_advanced_grid_levels(
                 grid_config, current_price, optimal_config
             )
 
             self.logger.info(f"✅ Grid configuration created for {symbol}")
+            self.logger.info(f"   💰 Total capital: ${grid_config.total_capital:,.2f}")
+            self.logger.info(f"   👤 Client ID: {grid_config.client_id}")
             self.logger.info(f"   📉 Buy levels: {len(grid_config.buy_levels)}")
             self.logger.info(f"   📈 Sell levels: {len(grid_config.sell_levels)}")
 

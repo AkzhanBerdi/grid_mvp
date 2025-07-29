@@ -524,13 +524,14 @@ class GridTradingEngine:
 
             # 🔧 FIX 2: Record in FIFO with correct price
             try:
-                self.fifo_service.record_order_fill(
+                self.fifo_service.on_order_filled(
                     client_id=self.client_id,
                     symbol=symbol,
                     side=side,
                     quantity=quantity,
-                    price=price,  # Use actual price, not level number
+                    price=price,
                     order_id=order["orderId"],
+                    level=level.get("level"),  # Pass the level number
                 )
             except Exception as fifo_error:
                 self.logger.error(f"❌ FIFO recording error: {fifo_error}")
@@ -548,7 +549,7 @@ class GridTradingEngine:
     async def _create_replacement_order(
         self, symbol: str, level: dict, original_side: str, grid_config
     ):
-        """🔧 FIXED: Create replacement order with proper inventory validation"""
+        """🔧 FIXED: Create replacement order with proper inventory validation AND precision"""
         try:
             # Determine opposite side for replacement
             replacement_side = "SELL" if original_side == "BUY" else "BUY"
@@ -569,6 +570,12 @@ class GridTradingEngine:
                     self.logger.error(f"❌ Cannot get current price for {symbol}")
                     return
 
+                # Get exchange rules for precision (ADD THIS)
+                exchange_rules = await self.utility.get_exchange_rules_simple(symbol)
+                if not exchange_rules:
+                    self.logger.error(f"❌ Cannot get exchange rules for {symbol}")
+                    return
+
                 # Get optimal quantity using inventory manager
                 optimal_quantity = self.inventory_manager.get_optimal_quantity(
                     symbol, replacement_side, current_price
@@ -580,14 +587,18 @@ class GridTradingEngine:
                     )
                     return
 
-                # Validate inventory availability
+                # 🔧 ADD: Format quantity with proper precision
+                quantity_precision = exchange_rules.get("quantity_precision", 4)
+                formatted_quantity = round(optimal_quantity, quantity_precision)
+
+                # Validate inventory availability (use formatted quantity)
                 if replacement_side == "BUY":
                     can_place, reason = self.inventory_manager.can_place_buy_order(
-                        symbol, optimal_quantity * current_price
+                        symbol, formatted_quantity * current_price
                     )
                 else:
                     can_place, reason = self.inventory_manager.can_place_sell_order(
-                        symbol, optimal_quantity
+                        symbol, formatted_quantity
                     )
 
                 if not can_place:
@@ -612,16 +623,26 @@ class GridTradingEngine:
                     )
 
                 # Round to proper precision using correct method
-                exchange_rules = await self.utility.get_exchange_rules_simple(symbol)
-                if exchange_rules:
-                    tick_size = exchange_rules.get("tick_size", 0.01)
-                    replacement_price = self.utility.round_to_tick_size(
-                        replacement_price, tick_size
-                    )
+                tick_size = exchange_rules.get("tick_size", 0.01)
+                replacement_price = self.utility.round_to_tick_size(
+                    replacement_price, tick_size
+                )
 
-                # Reserve inventory
+                # 🔧 ADD: Format strings for Binance API
+                quantity_string = f"{formatted_quantity:.{quantity_precision}f}".rstrip(
+                    "0"
+                ).rstrip(".")
+                price_string = f"{replacement_price:.6f}".rstrip("0").rstrip(".")
+
+                # Ensure minimum precision (don't remove all decimal places)
+                if "." not in quantity_string and quantity_precision > 0:
+                    quantity_string = f"{formatted_quantity:.1f}"
+                if "." not in price_string:
+                    price_string = f"{replacement_price:.2f}"
+
+                # Reserve inventory (use formatted quantity)
                 if not self.inventory_manager.reserve_for_order(
-                    symbol, replacement_side, optimal_quantity, replacement_price
+                    symbol, replacement_side, formatted_quantity, replacement_price
                 ):
                     self.logger.warning(
                         f"⚠️ Cannot reserve inventory for replacement {replacement_side} order"
@@ -633,14 +654,14 @@ class GridTradingEngine:
                     if replacement_side == "BUY":
                         order = self.binance_client.order_limit_buy(
                             symbol=symbol,
-                            quantity=optimal_quantity,
-                            price=str(replacement_price),
+                            quantity=quantity_string,  # 🔧 FIXED: Use formatted string
+                            price=price_string,  # 🔧 FIXED: Use formatted string
                         )
                     else:
                         order = self.binance_client.order_limit_sell(
                             symbol=symbol,
-                            quantity=optimal_quantity,
-                            price=str(replacement_price),
+                            quantity=quantity_string,  # 🔧 FIXED: Use formatted string
+                            price=price_string,  # 🔧 FIXED: Use formatted string
                         )
 
                     # Update level with new order
@@ -649,13 +670,13 @@ class GridTradingEngine:
                     level["price"] = replacement_price
 
                     self.logger.info(
-                        f"✅ Replacement {replacement_side} order placed: {optimal_quantity:.4f} @ ${replacement_price:.4f}"
+                        f"✅ Replacement {replacement_side} order placed: {quantity_string} @ ${price_string} (ID: {order['orderId']})"
                     )
 
                 except Exception as order_error:
                     # Release reservation on failure
                     self.inventory_manager.release_reservation(
-                        symbol, replacement_side, optimal_quantity, replacement_price
+                        symbol, replacement_side, formatted_quantity, replacement_price
                     )
                     self.logger.error(
                         f"❌ Failed to place replacement order: {order_error}"

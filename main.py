@@ -299,7 +299,6 @@ class BadTradingService:
             # Initialize components
             self._init_database()
             await self._startup_checks()
-            await self._init_fifo_monitoring()
             self.setup_telegram_bot()
 
             # Send startup notification

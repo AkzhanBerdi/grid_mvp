@@ -129,8 +129,12 @@ class GridOrchestrator:
             if not binance_client:
                 return False
 
-            # Create manager
-            manager = GridManager(binance_client=binance_client, client_id=client_id)
+            # 🔧 FIXED: Pass shared FIFO service to GridManager
+            manager = GridManager(
+                binance_client=binance_client,
+                client_id=client_id,
+                fifo_service=self.fifo_service,  # ✅ Share the single instance
+            )
 
             # Store manager
             self.advanced_managers[client_id] = manager
