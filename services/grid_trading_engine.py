@@ -1,10 +1,4 @@
-"""
-Grid Trading Engine - Fixed Production Version
-=============================================
-
-Clean trading engine with proper inventory integration and error handling.
-FIXED to use correct utility service methods.
-"""
+# services/grid_trading_engine.py
 
 import logging
 from typing import Dict, Optional

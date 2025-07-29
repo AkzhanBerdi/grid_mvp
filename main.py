@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# root directory
 """
 GridTrader Pro - Clean Production Version
 ========================================
@@ -209,34 +210,6 @@ class BadTradingService:
         except Exception as e:
             self.logger.error(f"Failed to setup Telegram bot: {e}")
             return None
-
-    async def _init_fifo_monitoring(self):
-        """Initialize FIFO monitoring for existing clients"""
-        try:
-            # Import safely
-            from utils.fifo_telegram_monitor import FIFOMonitoringService
-
-            self.fifo_monitoring_service = FIFOMonitoringService()
-
-            # Get active clients
-            with sqlite3.connect(self.config.DATABASE_PATH) as conn:
-                cursor = conn.execute(
-                    "SELECT telegram_id FROM clients WHERE status = 'active'"
-                )
-                active_clients = [row[0] for row in cursor.fetchall()]
-
-            # Initialize monitoring silently
-            for client_id in active_clients:
-                await self.fifo_monitoring_service.add_client_monitor(client_id)
-
-            self.logger.info(
-                f"✅ FIFO monitoring initialized for {len(active_clients)} clients"
-            )
-
-        except ImportError:
-            self.logger.warning("FIFO monitoring service not available")
-        except Exception as e:
-            self.logger.error(f"Failed to initialize FIFO monitoring: {e}")
 
     async def send_startup_notification(self):
         """Send startup notification"""

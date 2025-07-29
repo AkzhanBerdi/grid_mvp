@@ -1,4 +1,5 @@
 # config.py
+# root directory
 """Configuration management for Right Bastard Client Service"""
 
 import os

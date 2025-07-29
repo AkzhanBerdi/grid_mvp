@@ -1,10 +1,4 @@
-"""
-Inventory Management System - Fixed Production Version
-====================================================
-
-Clean inventory manager with dynamic symbol tracking and proper error handling.
-"""
-
+# services/inventory_manager.py
 import logging
 from dataclasses import dataclass
 from typing import Dict, Tuple

@@ -1,4 +1,4 @@
-# services/pure_usdt_grid_initializer.py - ENHANCED VERSION
+# services/usdt_initializer.py
 """
 Pure USDT Grid Initializer - Enhanced with Advanced Features Integration
 ========================================================================

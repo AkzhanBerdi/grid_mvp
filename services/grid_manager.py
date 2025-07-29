@@ -1,9 +1,4 @@
-"""
-Single Advanced Grid Manager - Fixed Production Version
-======================================================
-
-Clean grid manager with proper inventory integration and error handling.
-"""
+# services/grid_manager.py
 
 import logging
 import time
@@ -14,6 +9,7 @@ from binance.client import Client
 from models.grid_config import GridConfig
 from repositories.client_repository import ClientRepository
 from repositories.trade_repository import TradeRepository
+from services.compound_manager import CompoundInterestManager
 from services.fifo_service import FIFOService
 from services.grid_monitor import GridMonitoringService
 from services.grid_trading_engine import GridTradingEngine
@@ -24,36 +20,6 @@ from services.trading_features import (
     SmartGridAutoReset,
     VolatilityBasedRiskManager,
 )
-
-# Safe imports with fallbacks
-try:
-    from services.compound_manager import CompoundInterestManager
-
-    COMPOUND_AVAILABLE = True
-except ImportError:
-    COMPOUND_AVAILABLE = False
-
-    class CompoundInterestManager:
-        def __init__(self, fifo_service):
-            self.fifo_service = fifo_service
-
-        async def get_current_order_size(self, client_id, symbol, base_capital):
-            return base_capital / 10
-
-        def get_current_multiplier(self):
-            return 1.0
-
-
-try:
-    from utils.fifo_telegram_monitor import FIFOMonitoringService
-
-    FIFO_MONITOR_AVAILABLE = True
-except ImportError:
-    FIFO_MONITOR_AVAILABLE = False
-
-    class FIFOMonitoringService:
-        def __init__(self):
-            pass
 
 
 class GridManager:
@@ -80,19 +46,10 @@ class GridManager:
         self.auto_reset_managers: Dict[str, SmartGridAutoReset] = {}
 
         # Initialize compound manager
-        if COMPOUND_AVAILABLE:
-            self.compound_manager = CompoundInterestManager(self.fifo_service)
-            self.logger.info(
-                "✅ Advanced CompoundInterestManager with Kelly Criterion activated"
-            )
-        else:
-            self.compound_manager = CompoundInterestManager(self.fifo_service)
-            self.logger.warning("⚠️ Using basic compound manager fallback")
-
-        # Initialize FIFO monitoring
-        if FIFO_MONITOR_AVAILABLE:
-            self.notification_manager = FIFOMonitoringService()
-            self.logger.info("✅ FIFO Notification Manager initialized")
+        self.compound_manager = CompoundInterestManager(self.fifo_service)
+        self.logger.info(
+            "✅ Advanced CompoundInterestManager with Kelly Criterion activated"
+        )
 
         # State
         self.active_grids: Dict[str, GridConfig] = {}

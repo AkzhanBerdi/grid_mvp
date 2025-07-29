@@ -1,4 +1,4 @@
-# services/enhanced_fifo_service.py
+# services/fifo_service.py
 """
 Enhanced FIFO Service for Pure USDT Grid Initialization
 ======================================================
@@ -15,7 +15,6 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from config import Config
-from services.telegram_notifier import TelegramNotifier
 
 
 class FIFOService:
@@ -31,11 +30,13 @@ class FIFOService:
 
         # Add notification support
         try:
+            from services.telegram_notifier import TelegramNotifier
+
             self.telegram = TelegramNotifier()
             self.notifications_enabled = self.telegram.enabled
-        except ImportError:
+        except (ImportError, Exception):
+            self.telegram = None
             self.notifications_enabled = False
-            self.logger.warning("Telegram notifications not available")
 
         # Add startup suppression (prevents spam during service startup)
         self.startup_mode = True

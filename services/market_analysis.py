@@ -1,4 +1,4 @@
-# services/market_analysis.py - FIXED VERSION
+# services/market_analysis.py
 """Fixed Market Analysis Service with Better Error Handling"""
 
 import logging

@@ -1,4 +1,4 @@
-# models/client.py - FIXED VERSION
+# models/client.py
 """Fixed Client model with proper database schema compatibility"""
 
 from dataclasses import dataclass, field

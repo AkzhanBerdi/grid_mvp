@@ -1,12 +1,8 @@
-"""
-Client Handler - Clean Production Version
-========================================
-
-Enhanced client handler with smart adaptive trading and clean FIFO integration.
-"""
+# handlers/client_handler.py
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from services.fifo_service import FIFOService
 from utils.base_handler import BaseClientHandler
 
 
@@ -15,15 +11,7 @@ class ClientHandler(BaseClientHandler):
 
     def __init__(self):
         super().__init__()
-
-        # Initialize FIFO service safely
-        try:
-            from services.fifo_service import FIFOService
-
-            self.fifo_service = FIFOService()
-        except ImportError:
-            self.logger.warning("FIFO service not available")
-            self.fifo_service = None
+        self.fifo_service = FIFOService()
 
     async def handle_start(self, update, context):
         """Handle /start command"""

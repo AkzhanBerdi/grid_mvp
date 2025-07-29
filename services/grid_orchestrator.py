@@ -1,10 +1,4 @@
-"""
-Grid Orchestrator for Single Advanced Grid Architecture
-======================================================
-
-Singleton orchestrator that manages all grid trading operations.
-Simplified and optimized for production use.
-"""
+# services/grid_orchestrator.py
 
 import asyncio
 import logging

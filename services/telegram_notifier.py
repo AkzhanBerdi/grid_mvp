@@ -51,3 +51,12 @@ class TelegramNotifier:
         except Exception as e:
             self.logger.error(f"❌ Telegram send error: {e}")
             return False
+
+    async def send_milestone_notification(
+        self, client_id: int, profit: float, milestone: float
+    ):
+        message = f"""🎉 MILESTONE REACHED!
+    💰 Total Profit: ${profit:.2f}
+    🎯 Milestone: ${milestone}
+    👤 Client: {client_id}"""
+        await self.send_message(message)

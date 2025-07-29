@@ -442,53 +442,7 @@ class AnalyticsCleanup:
     @staticmethod
     def get_removal_instructions() -> str:
         """Instructions for removing broken components"""
-        return """
-🗑️ **ANALYTICS CLEANUP INSTRUCTIONS**
-
-**1. Remove Broken Files:**
-- `analytics/fifo_profit_tracker.py` (phantom profits)
-- `services/smart_analytics.py` (complex broken logic)
-- `utils/fifo_telegram_monitor.py` (unreliable calculations)
-
-**2. Clean Handler Files:**
-Remove these imports:
-```python
-from analytics.fifo_profit_tracker import FIFOProfitTracker
-from services.smart_analytics import SmartAnalytics
-```
-
-Replace with:
-```python
-from analytics.sqlite_analytics import AnalyticsCommandInterface
-```
-
-**3. Remove Dashboard Complexity:**
-- Delete performance refresh buttons
-- Remove milestone system displays
-- Strip async analytics calls
-- Clean client handler analytics methods
-
-**4. Replace with Simple Commands:**
-```python
-# In your message handler
-if text.startswith('/profit'):
-    analytics = AnalyticsCommandInterface()
-    response = analytics.handle_profit_command(client_id)
-    await update.message.reply_text(response)
-```
-
-**5. Remove Database Analytics Tables:**
-The `trades` table has everything we need. Remove:
-- `analytics_cache` table
-- `profit_snapshots` table  
-- `fifo_matches` table
-- Any other analytics-specific tables
-
-**SUCCESS RESULT:**
-- `/profit` shows exactly $44.38 (our SQLite truth)
-- `/stats` shows real trading statistics
-- No phantom data or async errors
-- Fast, reliable analytics from SQLite only
+        return """ deleted
 """
 
     @staticmethod

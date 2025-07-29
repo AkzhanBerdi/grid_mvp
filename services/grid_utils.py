@@ -1,4 +1,4 @@
-# services/grid_utility_service_fixed.py
+# services/grid_utils.py
 """
 FIXED Grid Utility Service - Extracted from GridManager
 ==============================================================

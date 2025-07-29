@@ -1,4 +1,4 @@
-# services/grid_monitoring_service.py
+# services/grid_monitor.py
 """
 Grid Monitoring Service - Extracted from GridManager
 ================================================================

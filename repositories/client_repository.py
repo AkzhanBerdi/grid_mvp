@@ -1,4 +1,4 @@
-# repositories/client_repository.py - COMPLETELY FIXED VERSION
+# repositories/client_repository.py
 """Client repository with FIXED field mapping and error handling"""
 
 import logging

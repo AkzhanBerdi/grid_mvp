@@ -1,20 +1,4 @@
-"""
-Advanced Feature 1: Compound Interest Manager with Kelly Criterion
-==================================================================
-
-This replaces static order sizing with intelligent dynamic position sizing that:
-- Automatically grows order sizes from profits (compound interest)
-- Uses Kelly Criterion for optimal position sizing
-- Implements safety caps to prevent over-leveraging
-- Integrates with FIFO profit tracking for real-time adjustments
-- Provides risk-adjusted allocation between base and enhanced grids
-
-Key Benefits:
-- Maximizes long-term capital growth
-- Prevents position sizes from becoming too large
-- Automatically reinvests profits optimally
-- Reduces risk during losing streaks
-"""
+# services/compound_manager.py
 
 import logging
 import time
