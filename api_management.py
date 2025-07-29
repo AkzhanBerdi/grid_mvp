@@ -4,18 +4,22 @@ API Key Management Script for GridTrader Bot
 Safely removes old API keys and adds new ones
 """
 
-import sqlite3
 import logging
+import sqlite3
 import sys
 from pathlib import Path
+
+from config import Config
+from repositories.client_repository import ClientRepository
+from utils.crypto import CryptoUtils
+
+INVALID_ID = "❌ Invalid Telegram ID"
+CANCELLED_OPERATION = "❌ Operation cancelled"
 
 # Add project root to path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from config import Config
-from utils.crypto import CryptoUtils
-from repositories.client_repository import ClientRepository
 
 class APIKeyManager:
     def __init__(self, db_path: str = None):
@@ -108,7 +112,7 @@ class APIKeyManager:
                     
                     confirm = input(f"⚠️  This will remove API keys from {count} clients. Continue? (yes/no): ")
                     if confirm.lower() != 'yes':
-                        print("❌ Operation cancelled")
+                        print(CANCELLED_OPERATION)
                         return False
                     
                     conn.execute("""
@@ -242,13 +246,13 @@ class APIKeyManager:
         choice = input("\nSelect option (1-4): ").strip()
         
         if choice == "4":
-            print("❌ Operation cancelled")
+            print(CANCELLED_OPERATION)
             return False
         
         # Final confirmation
         confirm = input("\n⚠️  This is irreversible! Type 'PURGE' to confirm: ")
         if confirm != "PURGE":
-            print("❌ Operation cancelled")
+            print(CANCELLED_OPERATION)
             return False
         
         try:
@@ -318,7 +322,7 @@ def main():
                     telegram_id = int(telegram_id)
                     manager.remove_api_keys(telegram_id)
                 except ValueError:
-                    print("❌ Invalid Telegram ID")
+                    print(INVALID_ID)
                     
             elif choice == "3":
                 manager.remove_api_keys()
@@ -332,7 +336,7 @@ def main():
                     telegram_id = int(telegram_id)
                     manager.add_api_keys(telegram_id, api_key, secret_key)
                 except ValueError:
-                    print("❌ Invalid Telegram ID")
+                    print(INVALID_ID)
                     
             elif choice == "5":
                 telegram_id_input = input("Enter Telegram ID (or press Enter for all): ").strip()
@@ -341,7 +345,7 @@ def main():
                     try:
                         telegram_id = int(telegram_id_input)
                     except ValueError:
-                        print("❌ Invalid Telegram ID")
+                        print(INVALID_ID)
                         continue
                 manager.verify_api_keys(telegram_id)
                 

@@ -15,8 +15,8 @@ from binance.client import Client
 
 from models.client import GridStatus
 from repositories.client_repository import ClientRepository
-from services.enhanced_fifo_service import EnhancedFIFOService
-from services.single_advanced_grid_manager import SingleAdvancedGridManager
+from services.fifo_service import FIFOService
+from services.grid_manager import GridManager
 from utils.crypto import CryptoUtils
 
 
@@ -50,14 +50,14 @@ class GridOrchestrator:
         self.crypto_utils = CryptoUtils()
 
         # Storage for managers and clients
-        self.advanced_managers: Dict[int, SingleAdvancedGridManager] = {}
+        self.advanced_managers: Dict[int, GridManager] = {}
         self.binance_clients: Dict[int, Client] = {}
 
         # Services
         try:
-            self.fifo_service = EnhancedFIFOService()
+            self.fifo_service = FIFOService()
         except Exception as e:
-            self.logger.error(f"❌ Failed to initialize EnhancedFIFOService: {e}")
+            self.logger.error(f"❌ Failed to initialize FIFOService: {e}")
             self.fifo_service = None
 
         # State tracking
@@ -136,16 +136,12 @@ class GridOrchestrator:
                 return False
 
             # Create manager
-            manager = SingleAdvancedGridManager(
-                binance_client=binance_client, client_id=client_id
-            )
+            manager = GridManager(binance_client=binance_client, client_id=client_id)
 
             # Store manager
             self.advanced_managers[client_id] = manager
 
-            self.logger.info(
-                f"✅ Created SingleAdvancedGridManager for client {client_id}"
-            )
+            self.logger.info(f"✅ Created GridManager for client {client_id}")
             return True
 
         except Exception as e:

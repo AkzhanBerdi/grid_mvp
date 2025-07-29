@@ -281,7 +281,7 @@ class SingleGridPortfolioManager:
 
     def get_asset_configuration(self, symbol: str) -> Dict:
         """
-        Get configuration for specific asset compatible with SingleAdvancedGridManager
+        Get configuration for specific asset compatible with GridManager
         """
         asset_config = self.portfolio_allocation.get(symbol)
 
@@ -305,7 +305,7 @@ class SingleGridPortfolioManager:
             "risk_level": asset_config["risk_level"],
             "expected_return": asset_config["expected_annual_return"],
             "rationale": asset_config["rationale"],
-            # Additional config for SingleAdvancedGridManager compatibility
+            # Additional config for GridManager compatibility
             "grid_spacing_base": asset_config["grid_spacing"],
             "compound_aggressiveness": self._get_compound_aggressiveness(
                 asset_config["risk_level"]
@@ -428,12 +428,12 @@ class SingleGridPortfolioManager:
 
 
 # UPDATE: Replace this section in your existing asset configs
-# In your SingleAdvancedGridManager.__init__, UPDATE the asset_configs to use this:
+# In your GridManager.__init__, UPDATE the asset_configs to use this:
 
 
 def get_updated_asset_configs(total_capital: float = 2400.0) -> Dict:
     """
-    REPLACE your existing asset_configs in SingleAdvancedGridManager with this
+    REPLACE your existing asset_configs in GridManager with this
     """
     portfolio_manager = SingleGridPortfolioManager(total_capital)
 

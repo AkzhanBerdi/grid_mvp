@@ -18,7 +18,7 @@ from config import Config
 from services.telegram_notifier import TelegramNotifier
 
 
-class EnhancedFIFOService:
+class FIFOService:
     """
     Enhanced FIFO Service that supports pure USDT grid initialization
     Extends existing FIFO functionality with cost basis management
@@ -898,9 +898,6 @@ Value: ${order_value:.2f}"""
             self.logger.error(f"❌ Legacy log_trade error: {e}")
             return False
 
-    # Add to EnhancedFIFOService class:
-
-
     async def notify_api_error(
         self,
         error_code: str,
@@ -952,13 +949,13 @@ Value: ${order_value:.2f}"""
 
             # Add helpful context for common errors
             if "insufficient balance" in error_message.lower():
-                message += (
-                    "\n\n💡 **Note:** Insufficient balance - normal during rapid trading"
-                )
+                message += "\n\n💡 **Note:** Insufficient balance - normal during rapid trading"
             elif "lot_size" in error_message.lower():
                 message += "\n\n💡 **Note:** Order size too small - precision issue"
             elif "notional" in error_message.lower():
-                message += "\n\n💡 **Note:** Order value too small - minimum $5 required"
+                message += (
+                    "\n\n💡 **Note:** Order value too small - minimum $5 required"
+                )
             elif error_code in ["-2014", "-1022"]:
                 message += "\n\n🚨 **CRITICAL:** Authentication issue - check API keys"
 
@@ -982,7 +979,6 @@ Value: ${order_value:.2f}"""
         except Exception as e:
             self.logger.error(f"❌ Error in API error handler: {e}")
             return False
-
 
     async def notify_grid_status(
         self,
@@ -1055,7 +1051,6 @@ Value: ${order_value:.2f}"""
             self.logger.error(f"❌ Failed to send grid status notification: {e}")
             return False
 
-
     def _get_error_severity_emoji(self, error_code: str) -> str:
         """Get appropriate emoji for error severity"""
         critical_errors = ["-2014", "-1022", "-1021"]  # Auth/signature issues
@@ -1067,11 +1062,12 @@ Value: ${order_value:.2f}"""
             return "❌"
         else:
             return "⚠️"
-    
+
+
 # Integration helper functions
-def create_enhanced_fifo_service(db_path: Optional[str] = None) -> EnhancedFIFOService:
+def create_enhanced_fifo_service(db_path: Optional[str] = None) -> FIFOService:
     """Factory function to create enhanced FIFO service"""
-    return EnhancedFIFOService(db_path)
+    return FIFOService(db_path)
 
 
 async def migrate_existing_client_to_enhanced_fifo(
@@ -1079,7 +1075,7 @@ async def migrate_existing_client_to_enhanced_fifo(
     symbol: str,
     current_asset_holdings: float,
     estimated_cost_basis: float,
-    fifo_service: EnhancedFIFOService,
+    fifo_service: FIFOService,
 ) -> Dict:
     """
     Helper function to migrate existing clients to enhanced FIFO tracking

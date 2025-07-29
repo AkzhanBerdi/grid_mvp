@@ -48,7 +48,7 @@ class AdminTools:
             if client:
                 stats = self.trade_repo.get_client_trade_stats(client_id)
                 print(
-                    f"   {client.first_name or client_username or client_id}: "
+                    f"   {client.first_name or client.username or client_id}: "
                     f"{stats['total_trades']} trades, "
                     f"${stats['total_profit']:.2f} profit"
                 )
@@ -283,4 +283,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

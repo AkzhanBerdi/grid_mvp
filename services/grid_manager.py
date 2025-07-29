@@ -1,9 +1,8 @@
 """
-Single Advanced Grid Manager - Clean Production Version
+Single Advanced Grid Manager - Fixed Production Version
 ======================================================
 
-Unified grid manager that handles all advanced trading features
-with clean separation of concerns and minimal code complexity.
+Clean grid manager with proper inventory integration and error handling.
 """
 
 import logging
@@ -12,23 +11,23 @@ from typing import Dict, Optional
 
 from binance.client import Client
 
-from models.single_advanced_grid_config import SingleAdvancedGridConfig
+from models.grid_config import GridConfig
 from repositories.client_repository import ClientRepository
 from repositories.trade_repository import TradeRepository
-from services.advanced_trading_features import (
+from services.fifo_service import FIFOService
+from services.grid_monitor import GridMonitoringService
+from services.grid_trading_engine import GridTradingEngine
+from services.grid_utils import GridUtilityService
+from services.inventory_manager import SingleGridInventoryManager
+from services.trading_features import (
     IntelligentMarketTimer,
     SmartGridAutoReset,
     VolatilityBasedRiskManager,
 )
-from services.enhanced_fifo_service import EnhancedFIFOService
-from services.grid_monitoring_service import GridMonitoringService
-from services.grid_trading_engine import GridTradingEngine
-from services.grid_utility_service import GridUtilityService
-from services.inventory_manager import SingleGridInventoryManager
 
 # Safe imports with fallbacks
 try:
-    from services.compound_interest_manager import CompoundInterestManager
+    from services.compound_manager import CompoundInterestManager
 
     COMPOUND_AVAILABLE = True
 except ImportError:
@@ -57,8 +56,8 @@ except ImportError:
             pass
 
 
-class SingleAdvancedGridManager:
-    """Clean single advanced grid manager with all features unified"""
+class GridManager:
+    """Clean single advanced grid manager with proper inventory integration"""
 
     def __init__(self, binance_client: Client, client_id: int):
         self.binance_client = binance_client
@@ -68,7 +67,7 @@ class SingleAdvancedGridManager:
         # Core services
         self.client_repo = ClientRepository()
         self.trade_repo = TradeRepository()
-        self.fifo_service = EnhancedFIFOService()
+        self.fifo_service = FIFOService()
 
         # Trading engine (handles all order operations)
         self.trading_engine = GridTradingEngine(binance_client, client_id)
@@ -96,7 +95,7 @@ class SingleAdvancedGridManager:
             self.logger.info("✅ FIFO Notification Manager initialized")
 
         # State
-        self.active_grids: Dict[str, SingleAdvancedGridConfig] = {}
+        self.active_grids: Dict[str, GridConfig] = {}
         self.inventory_manager: Optional[SingleGridInventoryManager] = None
 
         # Metrics
@@ -110,35 +109,31 @@ class SingleAdvancedGridManager:
         # Asset configurations
         self.asset_configs = {
             "ETHUSDT": {
-                "allocation": 0.40,  # 40%
+                "allocation": 0.40,
                 "risk_profile": "conservative",
-                "grid_spacing_base": 0.025,  # 2.5%
+                "grid_spacing_base": 0.025,
                 "volatility_threshold": 0.8,
             },
             "SOLUSDT": {
-                "allocation": 0.35,  # 35%
+                "allocation": 0.35,
                 "risk_profile": "moderate-aggressive",
-                "grid_spacing_base": 0.03,  # 3.0%
+                "grid_spacing_base": 0.03,
                 "volatility_threshold": 1.2,
             },
             "ADAUSDT": {
-                "allocation": 0.25,  # 25%
+                "allocation": 0.25,
                 "risk_profile": "moderate",
-                "grid_spacing_base": 0.025,  # 2.5%
+                "grid_spacing_base": 0.025,
                 "volatility_threshold": 1.0,
             },
         }
 
-        self.logger.info(
-            "🚀 SingleAdvancedGridManager initialized with separated trading engine"
-        )
+        self.logger.info("🚀 GridManager initialized with separated trading engine")
         self.logger.info("   🎯 Grid Strategy: Single 10-Level Advanced Grid")
         self.logger.info("   💎 Capital Efficiency: 100% (vs 35/65 split)")
 
     async def handle_force_command(self, command: str) -> Dict:
-        """
-        Handle FORCE commands: FORCE ETH 880, FORCE SOL 660, FORCE ADA 660
-        """
+        """Handle FORCE commands: FORCE ETH 880, FORCE SOL 660, FORCE ADA 660"""
         try:
             parts = command.strip().split()
             if len(parts) != 3 or parts[0].upper() != "FORCE":
@@ -178,7 +173,7 @@ class SingleAdvancedGridManager:
     async def start_single_advanced_grid(
         self, symbol: str, total_capital: float
     ) -> Dict:
-        """Start single advanced grid with all features"""
+        """Start single advanced grid with proper inventory integration"""
         try:
             self.logger.info(f"🚀 Starting SINGLE ADVANCED GRID for {symbol}")
             self.logger.info(
@@ -189,12 +184,15 @@ class SingleAdvancedGridManager:
             if not symbol or total_capital <= 0:
                 return {"success": False, "error": "Invalid symbol or capital"}
 
-            # Ensure asset config exists
-            if symbol not in self.asset_configs:
-                self._create_default_asset_config(symbol, total_capital)
+            # 🔧 FIX 1: Initialize inventory manager if needed
+            await self._ensure_inventory_manager(total_capital)
 
-            # Initialize inventory manager if needed
-            await self._initialize_inventory_manager(total_capital)
+            # 🔧 FIX 2: Add tracking for this specific symbol
+            if not await self._add_symbol_to_inventory(symbol, total_capital):
+                return {
+                    "success": False,
+                    "error": f"Failed to set up inventory tracking for {symbol}",
+                }
 
             # Initialize advanced managers for this symbol
             await self._initialize_advanced_managers(symbol)
@@ -256,6 +254,60 @@ class SingleAdvancedGridManager:
             self.logger.error(f"❌ Grid startup error for {symbol}: {e}")
             return {"success": False, "error": str(e)}
 
+    async def _ensure_inventory_manager(self, total_capital: float):
+        """🔧 FIX: Ensure inventory manager exists and is properly initialized"""
+        try:
+            if not self.inventory_manager:
+                self.logger.info("Creating new inventory manager...")
+                self.inventory_manager = SingleGridInventoryManager(
+                    self.binance_client, total_capital
+                )
+
+                # Don't auto-initialize positions - let symbols add themselves
+                # await self.inventory_manager.initialize_asset_positions()
+
+                # Inject into trading engine
+                self.trading_engine.set_managers(
+                    self.inventory_manager, self.compound_manager
+                )
+                self.logger.info(
+                    "✅ Inventory manager created and injected into trading engine"
+                )
+            else:
+                # Update total capital if larger
+                if total_capital > self.inventory_manager.total_capital:
+                    self.inventory_manager.total_capital = total_capital
+                    self.logger.info(
+                        f"📊 Updated inventory manager capital to ${total_capital:,.2f}"
+                    )
+
+        except Exception as e:
+            self.logger.error(f"❌ Inventory manager setup error: {e}")
+            raise
+
+    async def _add_symbol_to_inventory(self, symbol: str, total_capital: float) -> bool:
+        """🔧 FIX: Add symbol tracking to inventory manager"""
+        try:
+            if not self.inventory_manager:
+                self.logger.error(f"❌ Cannot add {symbol} - no inventory manager")
+                return False
+
+            # Add tracking for this symbol
+            success = await self.inventory_manager.add_symbol_tracking(
+                symbol, total_capital
+            )
+
+            if success:
+                self.logger.info(f"✅ Added inventory tracking for {symbol}")
+            else:
+                self.logger.error(f"❌ Failed to add inventory tracking for {symbol}")
+
+            return success
+
+        except Exception as e:
+            self.logger.error(f"❌ Error adding {symbol} to inventory: {e}")
+            return False
+
     async def stop_single_advanced_grid(self, symbol: str) -> Dict:
         """Stop single advanced grid"""
         if symbol not in self.active_grids:
@@ -304,6 +356,18 @@ class SingleAdvancedGridManager:
                 try:
                     grid_config = self.active_grids[symbol]
 
+                    # 🔧 FIX: Ensure inventory tracking exists before monitoring
+                    if (
+                        self.inventory_manager
+                        and not self.inventory_manager.has_tracking(symbol)
+                    ):
+                        self.logger.warning(
+                            f"⚠️ {symbol} missing inventory tracking - attempting to add"
+                        )
+                        await self.inventory_manager.add_symbol_tracking(
+                            symbol, grid_config.total_capital
+                        )
+
                     # Check and replace filled orders
                     await self.trading_engine.check_and_replace_filled_orders(
                         symbol, grid_config
@@ -317,26 +381,6 @@ class SingleAdvancedGridManager:
 
         except Exception as e:
             self.logger.error(f"❌ Grid monitoring error: {e}")
-
-    async def _initialize_inventory_manager(self, total_capital: float):
-        """Initialize inventory manager if needed"""
-        try:
-            if not self.inventory_manager:
-                self.logger.info("Creating new inventory manager...")
-                self.inventory_manager = SingleGridInventoryManager(
-                    self.binance_client, total_capital
-                )
-                await self.inventory_manager.initialize_asset_positions()
-
-                # Inject into trading engine
-                self.trading_engine.set_managers(
-                    self.inventory_manager, self.compound_manager
-                )
-                self.logger.info(
-                    "✅ Inventory manager created and injected into trading engine"
-                )
-        except Exception as e:
-            self.logger.error(f"❌ Inventory manager error: {e}")
 
     async def _initialize_advanced_managers(self, symbol: str):
         """Initialize advanced managers for symbol"""
@@ -371,15 +415,23 @@ class SingleAdvancedGridManager:
 
     async def _create_grid_config(
         self, symbol: str, total_capital: float, current_price: float
-    ) -> Optional[SingleAdvancedGridConfig]:
+    ) -> Optional[GridConfig]:
         """Create optimized grid configuration"""
         try:
             self.logger.info("🧮 Calculating optimal grid for {symbol}")
 
-            asset_config = self.asset_configs[symbol]
+            asset_config = self.asset_configs.get(
+                symbol,
+                {
+                    "allocation": 1.0,
+                    "risk_profile": "moderate",
+                    "grid_spacing_base": 0.025,
+                    "volatility_threshold": 1.0,
+                },
+            )
 
             # Create grid config
-            grid_config = SingleAdvancedGridConfig(symbol, total_capital, asset_config)
+            grid_config = GridConfig(symbol, total_capital, asset_config)
             grid_config.center_price = current_price
 
             # Calculate optimal parameters
@@ -558,7 +610,13 @@ class SingleAdvancedGridManager:
 
             # Update center price and recalculate
             grid_config.center_price = new_center_price
-            asset_config = self.asset_configs[symbol]
+            asset_config = self.asset_configs.get(
+                symbol,
+                {
+                    "grid_spacing_base": 0.025,
+                    "risk_profile": "moderate",
+                },
+            )
 
             optimal_config = await self._calculate_optimal_parameters(
                 symbol, new_center_price, grid_config.total_capital, asset_config
@@ -581,16 +639,6 @@ class SingleAdvancedGridManager:
 
         except Exception as e:
             self.logger.error(f"❌ Smart reset error for {symbol}: {e}")
-
-    def _create_default_asset_config(self, symbol: str, total_capital: float):
-        """Create default configuration for unknown symbols"""
-        self.asset_configs[symbol] = {
-            "allocation": total_capital,
-            "risk_profile": "moderate",
-            "grid_spacing_base": 0.025,
-            "volatility_threshold": 1.0,
-        }
-        self.logger.info(f"✅ Created default config for {symbol}")
 
     def get_all_active_grids(self) -> Dict:
         """Get status of all active grids"""
@@ -636,6 +684,11 @@ class SingleAdvancedGridManager:
             trading_stats = self.trading_engine.get_trading_stats(symbol, grid_config)
             status.update(trading_stats)
 
+            # Add inventory status if available
+            if self.inventory_manager and self.inventory_manager.has_tracking(symbol):
+                inventory_status = self.inventory_manager.get_inventory_status(symbol)
+                status["inventory"] = inventory_status
+
             return status
 
         except Exception as e:
@@ -676,6 +729,12 @@ class SingleAdvancedGridManager:
 
             base_report["trading_summary"] = trading_summary
             base_report["metrics"] = self.metrics
+
+            # Add inventory health report
+            if self.inventory_manager:
+                base_report["inventory_health"] = (
+                    self.inventory_manager.validate_inventory_health()
+                )
 
             return base_report
 

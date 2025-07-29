@@ -22,7 +22,7 @@ from typing import Dict
 
 import numpy as np
 
-from services.enhanced_fifo_service import EnhancedFIFOService
+from services.fifo_service import FIFOService
 
 
 class CompoundInterestManager:
@@ -36,7 +36,7 @@ class CompoundInterestManager:
     - Risk management constraints
     """
 
-    def __init__(self, fifo_service: EnhancedFIFOService):
+    def __init__(self, fifo_service: FIFOService):
         self.fifo_service = fifo_service
         self.logger = logging.getLogger(__name__)
 
@@ -556,7 +556,7 @@ class CompoundInterestManager:
 class CompoundIntegrationService:
     """Service to integrate Compound Manager with existing grid system"""
 
-    def __init__(self, fifo_service: EnhancedFIFOService):
+    def __init__(self, fifo_service: FIFOService):
         self.compound_manager = CompoundInterestManager(fifo_service)
         self.fifo_service = fifo_service
         self.logger = logging.getLogger(__name__)

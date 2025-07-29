@@ -11,7 +11,7 @@ Pure USDT initialization gets ALL your advanced features:
 ✅ Smart Grid Auto-Reset system
 ✅ Intelligent Market Timing
 ✅ Precision Order Handling
-✅ SingleAdvancedGridManager integration
+✅ GridManager integration
 """
 
 import logging
@@ -22,7 +22,7 @@ from typing import Dict
 from binance.client import Client
 
 from repositories.trade_repository import TradeRepository
-from services.enhanced_fifo_service import EnhancedFIFOService
+from services.fifo_service import FIFOService
 from utils.crypto import CryptoUtils
 
 
@@ -284,7 +284,7 @@ class EnhancedPureUSDTGridInitializer:
     This version:
     1. Initializes Pure USDT with perfect FIFO tracking (as before)
     2. Integrates with your GridOrchestrator for advanced features
-    3. Uses SingleAdvancedGridManager for full feature utilization
+    3. Uses GridManager for full feature utilization
     4. Maintains all your existing advanced trading features
     """
 
@@ -292,7 +292,7 @@ class EnhancedPureUSDTGridInitializer:
         self,
         binance_client: Client,
         trade_repo: TradeRepository,
-        fifo_service: EnhancedFIFOService,
+        fifo_service: FIFOService,
     ):
         self.binance_client = binance_client
         self.trade_repo = trade_repo
@@ -802,7 +802,7 @@ class EnhancedGridInitializationOrchestrator:
         self,
         binance_client: Client,
         trade_repo: TradeRepository,
-        fifo_service: EnhancedFIFOService,
+        fifo_service: FIFOService,
     ):
         self.initializer = EnhancedPureUSDTGridInitializer(
             binance_client, trade_repo, fifo_service

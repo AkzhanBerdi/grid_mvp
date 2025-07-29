@@ -1,6 +1,6 @@
 # services/grid_utility_service_fixed.py
 """
-FIXED Grid Utility Service - Extracted from SingleAdvancedGridManager
+FIXED Grid Utility Service - Extracted from GridManager
 ==============================================================
 
 Fixed the string formatting bug that was causing format_quantity_string(1000, 0)
@@ -18,7 +18,7 @@ from binance.client import Client
 class GridUtilityService:
     """
     Pure utility functions for grid trading operations
-    Extracted from SingleAdvancedGridManager for better organization
+    Extracted from GridManager for better organization
     """
 
     def __init__(self, binance_client: Optional[Client] = None):

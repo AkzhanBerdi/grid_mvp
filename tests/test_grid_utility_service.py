@@ -15,8 +15,8 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from services.grid_utility_service import GridUtilityService, create_grid_utility
-from services.grid_utility_service import quick_round_price, quick_round_quantity
+from services.grid_utils import GridUtilityService, create_grid_utility
+from services.grid_utils import quick_round_price, quick_round_quantity
 
 
 class TestGridUtilityService(unittest.TestCase):

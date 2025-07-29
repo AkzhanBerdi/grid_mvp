@@ -1,6 +1,6 @@
 # services/grid_monitoring_service.py
 """
-Grid Monitoring Service - Extracted from SingleAdvancedGridManager
+Grid Monitoring Service - Extracted from GridManager
 ================================================================
 
 Handles all monitoring, status tracking, and performance calculation for grid trading:
@@ -29,7 +29,7 @@ from binance.client import Client
 class GridMonitoringService:
     """
     Dedicated service for grid monitoring and status tracking
-    Extracted from SingleAdvancedGridManager for better separation of concerns
+    Extracted from GridManager for better separation of concerns
     """
 
     def __init__(self, client_id: int, binance_client: Optional[Client] = None):

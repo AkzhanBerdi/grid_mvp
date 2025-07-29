@@ -18,9 +18,9 @@ class ClientHandler(BaseClientHandler):
 
         # Initialize FIFO service safely
         try:
-            from services.enhanced_fifo_service import EnhancedFIFOService
+            from services.fifo_service import FIFOService
 
-            self.fifo_service = EnhancedFIFOService()
+            self.fifo_service = FIFOService()
         except ImportError:
             self.logger.warning("FIFO service not available")
             self.fifo_service = None
@@ -422,9 +422,9 @@ Choose amount or type command like `ADA 1000`"""
         # Import required services
         from binance.client import Client
 
-        from repositories.enhanced_trade_repository import EnhancedTradeRepository
-        from services.enhanced_fifo_service import EnhancedFIFOService
-        from services.pure_usdt_grid_initializer import (
+        from repositories.trade_repository import EnhancedTradeRepository
+        from services.fifo_service import FIFOService
+        from services.usdt_initializer import (
             EnhancedGridInitializationOrchestrator,
         )
         from utils.crypto import CryptoUtils
@@ -439,7 +439,7 @@ Choose amount or type command like `ADA 1000`"""
 
         # Create Pure USDT orchestrator
         enhanced_trade_repo = EnhancedTradeRepository()
-        enhanced_fifo_service = EnhancedFIFOService()
+        enhanced_fifo_service = FIFOService()
         orchestrator = EnhancedGridInitializationOrchestrator(
             client_binance_client, enhanced_trade_repo, enhanced_fifo_service
         )

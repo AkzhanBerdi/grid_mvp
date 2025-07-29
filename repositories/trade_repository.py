@@ -9,6 +9,9 @@ from typing import Dict, List
 
 from config import Config
 
+from .client_repository import ClientRepository
+from .enhanced_trade_repository import EnhancedTradeRepository
+
 
 class TradeRepository:
     """Repository for trade data and analytics"""
@@ -282,8 +285,5 @@ class TradeRepository:
 
 # repositories/__init__.py
 """Repositories package initialization"""
-from .client_repository import ClientRepository
-from .enhanced_trade_repository import EnhancedTradeRepository
-from .trade_repository import TradeRepository
 
 __all__ = ["ClientRepository", "TradeRepository", "EnhancedTradeRepository"]

@@ -4,6 +4,8 @@
 from dataclasses import dataclass
 from typing import Dict, List
 
+from .client import Client, ClientStatus, GridStatus
+
 
 @dataclass
 class GridConfig:
@@ -148,8 +150,5 @@ class GridConfig:
 # models/__init__.py
 """Models package initialization"""
 
-from .client import Client, ClientStatus, GridStatus
-from .grid_config import GridConfig
 
 __all__ = ["Client", "ClientStatus", "GridStatus", "GridConfig"]
-
