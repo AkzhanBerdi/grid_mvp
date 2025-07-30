@@ -524,7 +524,7 @@ class GridTradingEngine:
 
             # 🔧 FIX 2: Record in FIFO with correct price
             try:
-                self.fifo_service.on_order_filled(
+                await self.fifo_service.on_order_filled(
                     client_id=self.client_id,
                     symbol=symbol,
                     side=side,

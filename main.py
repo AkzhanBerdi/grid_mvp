@@ -1,7 +1,5 @@
-#!/usr/bin/env python3
-# root directory
 """
-GridTrader Pro - Clean Production Version
+Bad Trader - Clean Production Version
 ========================================
 
 Professional grid trading service with clean architecture and minimal complexity.
@@ -293,7 +291,7 @@ class BadTradingService:
 
     async def start_async(self):
         """Main async start method"""
-        self.logger.info("🚀 Starting GridTrader Pro Client Service")
+        self.logger.info("🚀 Starting Bad Trader Service")
 
         try:
             # Initialize components
@@ -356,11 +354,11 @@ def main():
         print("❌ Invalid configuration. Please check your environment variables.")
         sys.exit(1)
 
-    print("🚀 Starting GridTrader Pro Client Service")
+    print("🚀 Starting Bad Trader Service")
     print("=" * 50)
     print("🎯 CURRENT SYSTEM FEATURES")
-    print("✅ Single Advanced Grid Manager")
-    print("✅ Grid Trading Engine (Separated Architecture)")
+    print("✅ Advanced Grid Manager")
+    print("✅ Grid Trading Engine")
     print("✅ Inventory Management System")
     print("✅ Compound Interest Manager")
     print("✅ Volatility Risk Management")
@@ -370,7 +368,7 @@ def main():
     print("✅ Precision Order Handling")
     print("✅ Grid Utility Service")
     print("✅ Network Recovery & Health Monitoring")
-    print("✅ Pure USDT Grid Initializer")
+    print("✅ USDT Grid Initializer")
     print("✅ Professional Client Management")
     print("✅ Telegram Bot Integration")
     print("✅ SQLite Analytics System")
