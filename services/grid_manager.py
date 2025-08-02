@@ -58,12 +58,6 @@ class GridManager:
             "✅ Advanced CompoundInterestManager with Kelly Criterion activated"
         )
 
-        # Initialize compound manager
-        self.compound_manager = CompoundInterestManager(self.fifo_service)
-        self.logger.info(
-            "✅ Advanced CompoundInterestManager with Kelly Criterion activated"
-        )
-
         # 🔧 CRITICAL FIX: Create inventory manager AFTER trading engine but BEFORE any usage
         self.inventory_manager = SingleGridInventoryManager(
             binance_client=binance_client, total_capital=2400.0
