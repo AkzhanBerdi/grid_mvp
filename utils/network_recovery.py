@@ -16,7 +16,7 @@ from config import Config
 from utils.network_utils import NetworkUtils
 
 
-class EnhancedNetworkRecovery:
+class NetworkRecovery:
     """
     Complete network recovery service using clean NetworkUtils
     FIXED VERSION - No syntax errors
