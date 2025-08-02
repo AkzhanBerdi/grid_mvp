@@ -43,6 +43,7 @@ class GridManager:
 
         # Trading engine (handles all order operations)
         self.trading_engine = GridTradingEngine(binance_client, client_id)
+
         self.utility = GridUtilityService(binance_client)
         self.monitoring = GridMonitoringService(client_id, binance_client)
 
@@ -57,9 +58,42 @@ class GridManager:
             "✅ Advanced CompoundInterestManager with Kelly Criterion activated"
         )
 
+        # Initialize compound manager
+        self.compound_manager = CompoundInterestManager(self.fifo_service)
+        self.logger.info(
+            "✅ Advanced CompoundInterestManager with Kelly Criterion activated"
+        )
+
+        # 🔧 CRITICAL FIX: Create inventory manager AFTER trading engine but BEFORE any usage
+        self.inventory_manager = SingleGridInventoryManager(
+            binance_client=binance_client, total_capital=2400.0
+        )
+        self.logger.info("✅ Created inventory manager")
+
+        # 🔧 CRITICAL FIX: Inject inventory manager into trading engine IMMEDIATELY
+        if hasattr(self.trading_engine, "set_managers"):
+            self.trading_engine.set_managers(
+                self.inventory_manager, self.compound_manager
+            )
+            self.logger.info("✅ Used set_managers method to inject inventory manager")
+        else:
+            # Fallback: direct assignment
+            self.trading_engine.inventory_manager = self.inventory_manager
+            self.logger.info("✅ Direct assignment of inventory manager")
+
+        # 🔧 VERIFICATION: Check injection worked
+        if self.trading_engine.inventory_manager is not None:
+            self.logger.info(
+                f"✅ Injection verified: {type(self.trading_engine.inventory_manager)}"
+            )
+        else:
+            self.logger.error(
+                "❌ Injection failed: trading_engine.inventory_manager is still None"
+            )
+
         # State
         self.active_grids: Dict[str, GridConfig] = {}
-        self.inventory_manager: Optional[SingleGridInventoryManager] = None
+        self.logger.info("✅ Created inventory manager")
 
         # Metrics
         self.metrics = {
@@ -136,34 +170,50 @@ class GridManager:
     async def start_single_advanced_grid(
         self, symbol: str, total_capital: float
     ) -> Dict:
-        """Start single advanced grid with proper inventory integration"""
+        """Start single advanced grid with reference corruption prevention"""
         try:
             self.logger.info(f"🚀 Starting SINGLE ADVANCED GRID for {symbol}")
             self.logger.info(
                 f"   💰 Total Capital: ${total_capital:,.2f} (100% allocation)"
             )
 
+            # 🔍 DEBUG: Check references BEFORE starting
+            self.debug_manager_references(f"before_start_{symbol}")
+
             # Validate inputs
             if not symbol or total_capital <= 0:
                 return {"success": False, "error": "Invalid symbol or capital"}
 
-            # 🔧 FIX 1: Initialize inventory manager if needed
+            # 🔧 CRITICAL: Ensure inventory manager
             await self._ensure_inventory_manager(total_capital)
 
-            # 🔧 FIX 2: Add tracking for this specific symbol
+            # 🔍 DEBUG: Check references AFTER manager setup
+            self.debug_manager_references(f"after_manager_setup_{symbol}")
+
+            # 🔧 CRITICAL: Add symbol tracking
             if not await self._add_symbol_to_inventory(symbol, total_capital):
                 return {
                     "success": False,
                     "error": f"Failed to set up inventory tracking for {symbol}",
                 }
 
+            # 🔍 DEBUG: Check references AFTER symbol addition
+            self.debug_manager_references(f"after_symbol_add_{symbol}")
+
             # Initialize advanced managers for this symbol
             await self._initialize_advanced_managers(symbol)
+
+            # 🔍 DEBUG: Check references AFTER advanced managers
+            self.debug_manager_references(f"after_advanced_managers_{symbol}")
+
+            # 🔧 MISSING CODE: Continue with the actual grid creation!
 
             # Get current price
             current_price = await self._get_current_price(symbol)
             if not current_price:
                 return {"success": False, "error": f"Could not get price for {symbol}"}
+
+            self.logger.info(f"📊 Current price for {symbol}: ${current_price:.6f}")
 
             # Execute 50/50 split
             split_result = await self.trading_engine.execute_initial_50_50_split(
@@ -179,6 +229,9 @@ class GridManager:
                 f"✅ 50/50 split completed: {split_result['asset_quantity']:.4f} {symbol.replace('USDT', '')} acquired"
             )
 
+            # 🔍 DEBUG: Check references AFTER 50/50 split
+            self.debug_manager_references(f"after_split_{symbol}")
+
             # Create and configure grid
             grid_config = await self._create_grid_config(
                 symbol, total_capital, current_price
@@ -188,6 +241,9 @@ class GridManager:
                     "success": False,
                     "error": "Failed to create grid configuration",
                 }
+
+            # 🔍 DEBUG: Check references AFTER grid config creation
+            self.debug_manager_references(f"after_grid_config_{symbol}")
 
             # Execute grid setup
             execution_result = await self.trading_engine.execute_enhanced_grid_setup(
@@ -199,9 +255,19 @@ class GridManager:
                     "error": execution_result.get("error", "Grid setup failed"),
                 }
 
+            # 🔍 DEBUG: Check references AFTER grid execution
+            self.debug_manager_references(f"after_grid_execution_{symbol}")
+
             # Store grid and update metrics
             self.active_grids[symbol] = grid_config
             self.metrics["grids_started"] += 1
+
+            # 🔍 DEBUG: Final check after storing grid
+            self.debug_manager_references(f"final_{symbol}")
+
+            self.logger.info(
+                f"🚀 FORCE COMMAND SUCCESS: {symbol.replace('USDT', '')} ${total_capital:.2f}"
+            )
 
             return {
                 "success": True,
@@ -215,10 +281,17 @@ class GridManager:
 
         except Exception as e:
             self.logger.error(f"❌ Grid startup error for {symbol}: {e}")
+            self.debug_manager_references(f"error_{symbol}")
+
+            # Add full stack trace for debugging
+            import traceback
+
+            self.logger.error(f"❌ Full error trace: {traceback.format_exc()}")
+
             return {"success": False, "error": str(e)}
 
     async def _ensure_inventory_manager(self, total_capital: float):
-        """🔧 FIX: Ensure inventory manager exists and is properly initialized"""
+        """🔧 FIXED: Prevent reference corruption during multi-grid setup"""
         try:
             if not self.inventory_manager:
                 self.logger.info("Creating new inventory manager...")
@@ -226,39 +299,122 @@ class GridManager:
                     self.binance_client, total_capital
                 )
 
-                # Don't auto-initialize positions - let symbols add themselves
-                # await self.inventory_manager.initialize_asset_positions()
-
-                # Inject into trading engine
-                self.trading_engine.set_managers(
+                # 🔧 SAFE: Only inject once during creation
+                success = self.trading_engine.set_managers(
                     self.inventory_manager, self.compound_manager
                 )
-                self.logger.info(
-                    "✅ Inventory manager created and injected into trading engine"
-                )
+
+                if not success:
+                    self.logger.error("❌ Failed to inject managers - aborting")
+                    raise RuntimeError("Manager injection failed")
+
+                self.logger.info("✅ Inventory manager created and injected")
+
             else:
-                # Update total capital if larger
-                if total_capital > self.inventory_manager.total_capital:
+                # 🔧 SAFE: Update existing manager WITHOUT re-injection
+                original_capital = self.inventory_manager.total_capital
+
+                if total_capital > original_capital:
                     self.inventory_manager.total_capital = total_capital
                     self.logger.info(
-                        f"📊 Updated inventory manager capital to ${total_capital:,.2f}"
+                        f"📊 Updated inventory manager capital: ${original_capital:.2f} → ${total_capital:.2f}"
                     )
+
+                # 🔧 CRITICAL: Verify the reference is still intact
+                if isinstance(self.inventory_manager, dict):
+                    self.logger.error(
+                        "🚨 CORRUPTION DETECTED: inventory_manager became dict!"
+                    )
+                    raise RuntimeError("Inventory manager corrupted - cannot continue")
+
+                # 🔧 CRITICAL: Verify trading engine still has correct reference
+                if isinstance(self.trading_engine.inventory_manager, dict):
+                    self.logger.error(
+                        "🚨 TRADING ENGINE CORRUPTION: Re-injecting correct reference"
+                    )
+
+                    # Emergency re-injection with validation
+                    success = self.trading_engine.set_managers(
+                        self.inventory_manager, self.compound_manager
+                    )
+
+                    if not success:
+                        raise RuntimeError("Emergency re-injection failed")
+
+                self.logger.info("✅ Inventory manager validated and updated")
 
         except Exception as e:
             self.logger.error(f"❌ Inventory manager setup error: {e}")
             raise
 
+    def debug_manager_references(self, context: str):
+        """Debug all manager references to find corruption"""
+        self.logger.error(f"🔍 MANAGER REFERENCES DEBUG ({context}):")
+        self.logger.error(
+            f"   GridManager.inventory_manager type: {type(self.inventory_manager)}"
+        )
+        self.logger.error(
+            f"   GridManager.inventory_manager ID: {id(self.inventory_manager) if self.inventory_manager else 'None'}"
+        )
+        self.logger.error(
+            f"   TradingEngine.inventory_manager type: {type(self.trading_engine.inventory_manager)}"
+        )
+        self.logger.error(
+            f"   TradingEngine.inventory_manager ID: {id(self.trading_engine.inventory_manager) if self.trading_engine.inventory_manager else 'None'}"
+        )
+
+        # Check if they're the same object
+        if self.inventory_manager and self.trading_engine.inventory_manager:
+            same_object = (
+                self.inventory_manager is self.trading_engine.inventory_manager
+            )
+            self.logger.error(f"   Same object reference: {same_object}")
+
+            if not same_object:
+                self.logger.error("🚨 REFERENCE MISMATCH DETECTED!")
+
+        # Check for dict corruption
+        if isinstance(self.inventory_manager, dict):
+            self.logger.error("🚨 GridManager inventory_manager is DICT!")
+            self.logger.error(f"   Keys: {list(self.inventory_manager.keys())}")
+
+        if isinstance(self.trading_engine.inventory_manager, dict):
+            self.logger.error("🚨 TradingEngine inventory_manager is DICT!")
+            self.logger.error(
+                f"   Keys: {list(self.trading_engine.inventory_manager.keys())}"
+            )
+
     async def _add_symbol_to_inventory(self, symbol: str, total_capital: float) -> bool:
-        """🔧 FIX: Add symbol tracking to inventory manager"""
+        """🔧 FIXED: Add symbol tracking with corruption prevention"""
         try:
             if not self.inventory_manager:
                 self.logger.error(f"❌ Cannot add {symbol} - no inventory manager")
+                return False
+
+            # 🔍 CRITICAL: Check if inventory manager is corrupted BEFORE calling methods
+            if isinstance(self.inventory_manager, dict):
+                self.logger.error(
+                    f"🚨 CORRUPTION: inventory_manager is dict before adding {symbol}!"
+                )
+                self.logger.error(
+                    f"   Dict keys: {list(self.inventory_manager.keys())}"
+                )
                 return False
 
             # Add tracking for this symbol
             success = await self.inventory_manager.add_symbol_tracking(
                 symbol, total_capital
             )
+
+            # 🔍 CRITICAL: Check if it became corrupted AFTER the call
+            if isinstance(self.inventory_manager, dict):
+                self.logger.error(
+                    f"🚨 CORRUPTION: inventory_manager became dict after adding {symbol}!"
+                )
+                self.logger.error(
+                    f"   Dict keys: {list(self.inventory_manager.keys())}"
+                )
+                return False
 
             if success:
                 self.logger.info(f"✅ Added inventory tracking for {symbol}")
@@ -269,6 +425,9 @@ class GridManager:
 
         except Exception as e:
             self.logger.error(f"❌ Error adding {symbol} to inventory: {e}")
+            self.logger.error(
+                f"   Inventory manager type during error: {type(self.inventory_manager)}"
+            )
             return False
 
     async def stop_single_advanced_grid(self, symbol: str) -> Dict:

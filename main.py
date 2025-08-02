@@ -75,6 +75,155 @@ class BadTradingService:
             self.logger.error(f"❌ Database initialization failed: {e}")
             raise
 
+    async def _fix_sol_inventory_manager(self):
+        """🔧 Emergency fix for SOL inventory manager issue"""
+        try:
+            self.logger.info("🟣 Applying SOL inventory manager fix...")
+
+            client_id = 485825055
+            if client_id in self.grid_orchestrator.advanced_managers:
+                manager = self.grid_orchestrator.advanced_managers[client_id]
+
+                # Fix None inventory manager
+                if manager.inventory_manager is None:
+                    self.logger.info("🔧 Creating missing inventory manager...")
+                    from services.inventory_manager import SingleGridInventoryManager
+
+                    manager.inventory_manager = SingleGridInventoryManager(
+                        binance_client=manager.binance_client, total_capital=2400.0
+                    )
+
+                    # Inject into trading engine
+                    if hasattr(manager.trading_engine, "set_managers"):
+                        manager.trading_engine.set_managers(
+                            manager.inventory_manager, manager.compound_manager
+                        )
+                    else:
+                        manager.trading_engine.inventory_manager = (
+                            manager.inventory_manager
+                        )
+
+                    self.logger.info("✅ Inventory manager created and injected")
+                else:
+                    # Inventory manager exists, check if it's healthy
+                    self.logger.info(
+                        f"📦 Inventory manager exists: {type(manager.inventory_manager)}"
+                    )
+
+                # Add SOL tracking if missing
+                if hasattr(manager.inventory_manager, "has_tracking"):
+                    if not manager.inventory_manager.has_tracking("SOLUSDT"):
+                        self.logger.info("🔧 Adding SOL tracking...")
+                        success = await manager.inventory_manager.add_symbol_tracking(
+                            "SOLUSDT", 840.0
+                        )
+                        if success:
+                            self.logger.info("✅ SOL tracking added successfully")
+                        else:
+                            self.logger.error("❌ Failed to add SOL tracking")
+                    else:
+                        self.logger.info("✅ SOL tracking already exists")
+
+                        # Check for dict corruption in SOL inventory
+                        if "SOLUSDT" in manager.inventory_manager.inventories:
+                            sol_inventory = manager.inventory_manager.inventories[
+                                "SOLUSDT"
+                            ]
+                            if isinstance(sol_inventory, dict):
+                                self.logger.warning(
+                                    "🔧 Repairing corrupted SOL inventory (dict -> AssetInventory)..."
+                                )
+                                from services.inventory_manager import AssetInventory
+
+                                manager.inventory_manager.inventories["SOLUSDT"] = (
+                                    AssetInventory(
+                                        symbol="SOLUSDT",
+                                        total_allocation=840.0,
+                                        usdt_balance=sol_inventory.get(
+                                            "usdt_balance", 420.0
+                                        ),
+                                        asset_balance=sol_inventory.get(
+                                            "asset_balance", 2.5
+                                        ),
+                                        reserved_usdt=0.0,
+                                        reserved_asset=0.0,
+                                        grid_spacing=0.030,
+                                        order_size_base=84.0,
+                                        grid_levels=10,
+                                    )
+                                )
+                                self.logger.info(
+                                    "✅ SOL inventory repaired (dict -> AssetInventory)"
+                                )
+                            else:
+                                self.logger.info(
+                                    f"✅ SOL inventory is healthy: {type(sol_inventory)}"
+                                )
+
+                # Apply same fix to other active symbols if needed
+                if hasattr(manager, "active_grids") and manager.active_grids:
+                    for symbol in manager.active_grids.keys():
+                        if symbol != "SOLUSDT":  # SOL already handled above
+                            if not manager.inventory_manager.has_tracking(symbol):
+                                self.logger.info(f"🔧 Adding tracking for {symbol}...")
+                                capital = (
+                                    800.0 if symbol == "ADAUSDT" else 960.0
+                                )  # ADA: 25%, ETH: 40%
+                                success = (
+                                    await manager.inventory_manager.add_symbol_tracking(
+                                        symbol, capital
+                                    )
+                                )
+                                if success:
+                                    self.logger.info(f"✅ {symbol} tracking added")
+
+                            # Check for dict corruption in other symbols too
+                            if symbol in manager.inventory_manager.inventories:
+                                inventory = manager.inventory_manager.inventories[
+                                    symbol
+                                ]
+                                if isinstance(inventory, dict):
+                                    self.logger.warning(
+                                        f"🔧 Repairing corrupted {symbol} inventory..."
+                                    )
+                                    from services.inventory_manager import (
+                                        AssetInventory,
+                                    )
+
+                                    # Default grid spacing based on symbol
+                                    spacing = 0.028 if symbol == "ADAUSDT" else 0.025
+                                    capital = 600.0 if symbol == "ADAUSDT" else 960.0
+
+                                    manager.inventory_manager.inventories[symbol] = (
+                                        AssetInventory(
+                                            symbol=symbol,
+                                            total_allocation=capital,
+                                            usdt_balance=inventory.get(
+                                                "usdt_balance", capital * 0.5
+                                            ),
+                                            asset_balance=inventory.get(
+                                                "asset_balance", 1.0
+                                            ),
+                                            reserved_usdt=0.0,
+                                            reserved_asset=0.0,
+                                            grid_spacing=spacing,
+                                            order_size_base=capital / 10,
+                                            grid_levels=10,
+                                        )
+                                    )
+                                    self.logger.info(f"✅ {symbol} inventory repaired")
+
+                self.logger.info("🎉 SOL inventory manager fix completed!")
+                return True
+
+            else:
+                self.logger.warning(f"⚠️ No manager found for client {client_id}")
+                return False
+
+        except Exception as e:
+            self.logger.error(f"❌ SOL fix failed: {e}")
+            return False
+
     async def _startup_checks(self):
         """Perform essential startup checks"""
         self.logger.info("🔍 Performing startup connectivity checks...")
@@ -297,6 +446,10 @@ class BadTradingService:
             # Initialize components
             self._init_database()
             await self._startup_checks()
+
+            # 🔧 CRITICAL: Apply SOL inventory manager fix after grid_orchestrator is ready
+            await self._fix_sol_inventory_manager()
+
             self.setup_telegram_bot()
 
             # Send startup notification
@@ -321,7 +474,7 @@ class BadTradingService:
         finally:
             self.running = False
 
-    def get_service_status(self):
+    def get_service_status(self):  # not used !?
         """Get service status"""
         try:
             health_status = self.network_recovery.get_health_status()
@@ -373,6 +526,7 @@ def main():
     print("✅ Telegram Bot Integration")
     print("✅ SQLite Analytics System")
     print("✅ Production-Ready Architecture")
+    print("🔧 SOL Inventory Manager Auto-Fix")
     print("=" * 50)
 
     # Create and start service

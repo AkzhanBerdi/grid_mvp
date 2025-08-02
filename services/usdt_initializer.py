@@ -3,6 +3,8 @@
 Pure USDT Grid Initializer - Enhanced with Advanced Features Integration
 ========================================================================
 
+🔧 FIXED VERSION - Prevents AssetInventory corruption
+
 This version integrates with your existing advanced grid system to ensure
 Pure USDT initialization gets ALL your advanced features:
 
@@ -12,6 +14,7 @@ Pure USDT initialization gets ALL your advanced features:
 ✅ Intelligent Market Timing
 ✅ Precision Order Handling
 ✅ GridManager integration
+✅ FIXED: Preserves AssetInventory dataclass objects
 """
 
 import logging
@@ -23,6 +26,9 @@ from binance.client import Client
 
 from repositories.trade_repository import TradeRepository
 from services.fifo_service import FIFOService
+from services.inventory_manager import (
+    AssetInventory,  # 🔧 CRITICAL: Import the dataclass
+)
 from utils.crypto import CryptoUtils
 
 
@@ -80,6 +86,7 @@ class PureUSDTAdvancedSync:
                 usdt_reserve,
                 asset_quantity,
                 asset_cost_basis,
+                total_capital,  # 🔧 FIXED: Pass total_capital
                 grid_orchestrator,
             )
 
@@ -118,9 +125,10 @@ class PureUSDTAdvancedSync:
         usdt_reserve: float,
         asset_quantity: float,
         asset_cost_basis: float,
+        total_capital: float,  # 🔧 FIXED: Added missing parameter
         grid_orchestrator,
     ) -> bool:
-        """Update the advanced manager's inventory to reflect Pure USDT state"""
+        """🔧 FIXED: Update the advanced manager's inventory WITHOUT corrupting objects"""
         try:
             self.logger.info("🔧 Method 1: Updating manager inventory state")
 
@@ -132,37 +140,69 @@ class PureUSDTAdvancedSync:
 
             manager = grid_orchestrator.advanced_managers[client_id]
 
-            # Method 1A: Update inventory manager
+            # Method 1A: Update inventory manager SAFELY
             if hasattr(manager, "inventory_manager"):
                 inventory_manager = manager.inventory_manager
 
-                self.logger.info("📦 Found inventory manager - updating state")
+                self.logger.info("📦 Found inventory manager - updating state SAFELY")
 
-                # CRITICAL FIX: Update the inventory to reflect Pure USDT purchase
+                # 🔧 CRITICAL FIX: Check if symbol tracking exists, if not create it
+                if not inventory_manager.has_tracking(symbol):
+                    self.logger.info(f"📝 Adding symbol tracking for {symbol}")
+                    success = await inventory_manager.add_symbol_tracking(
+                        symbol, total_capital
+                    )
+                    if not success:
+                        self.logger.error(f"❌ Failed to add tracking for {symbol}")
+                        return False
+
+                # 🔧 SAFE UPDATE: Only update attributes, never replace the object
                 if (
                     hasattr(inventory_manager, "inventories")
                     and symbol in inventory_manager.inventories
                 ):
                     inventory = inventory_manager.inventories[symbol]
 
-                    # Set the ACTUAL state from Pure USDT
-                    original_usdt = inventory.usdt_balance
-                    original_asset = inventory.asset_balance
+                    # 🔧 VERIFICATION: Ensure it's an AssetInventory object
+                    if not isinstance(inventory, AssetInventory):
+                        self.logger.error(
+                            f"❌ CORRUPTED: {symbol} inventory is {type(inventory)}, not AssetInventory"
+                        )
+                        # Emergency repair
+                        await self._emergency_repair_inventory_object(
+                            inventory_manager,
+                            symbol,
+                            usdt_reserve,
+                            asset_quantity,
+                            total_capital,
+                        )
+                        inventory = inventory_manager.inventories[symbol]
 
-                    inventory.usdt_balance = usdt_reserve
-                    inventory.asset_balance = asset_quantity
-                    inventory.reserved_usdt = 0.0
-                    inventory.reserved_asset = 0.0
+                    # ✅ SAFE: Update attributes of existing AssetInventory object
+                    if hasattr(inventory, "usdt_balance"):
+                        original_usdt = inventory.usdt_balance
+                        original_asset = inventory.asset_balance
 
-                    self.logger.info(f"✅ Updated {symbol} inventory:")
-                    self.logger.info(
-                        f"   USDT: ${original_usdt:.2f} → ${inventory.usdt_balance:.2f}"
-                    )
-                    self.logger.info(
-                        f"   Asset: {original_asset:.4f} → {inventory.asset_balance:.4f}"
-                    )
+                        inventory.usdt_balance = usdt_reserve
+                        inventory.asset_balance = asset_quantity
+                        inventory.reserved_usdt = 0.0
+                        inventory.reserved_asset = 0.0
 
-                    return True
+                        self.logger.info(
+                            f"✅ Updated {symbol} inventory (AssetInventory preserved):"
+                        )
+                        self.logger.info(f"   Type: {type(inventory)}")
+                        self.logger.info(
+                            f"   USDT: ${original_usdt:.2f} → ${inventory.usdt_balance:.2f}"
+                        )
+                        self.logger.info(
+                            f"   Asset: {original_asset:.4f} → {inventory.asset_balance:.4f}"
+                        )
+
+                        return True
+                    else:
+                        self.logger.error(f"❌ Invalid inventory object for {symbol}")
+                        return False
 
             # Method 1B: Update any asset config or grid config
             if hasattr(manager, "asset_configs"):
@@ -195,6 +235,54 @@ class PureUSDTAdvancedSync:
         except Exception as e:
             self.logger.error(f"❌ Inventory update error: {e}")
             return False
+
+    async def _emergency_repair_inventory_object(
+        self,
+        inventory_manager,
+        symbol: str,
+        usdt_reserve: float,
+        asset_quantity: float,
+        total_capital: float,
+    ):
+        """🚨 EMERGENCY: Repair corrupted inventory object"""
+        try:
+            self.logger.warning(f"🚨 Emergency repair for {symbol} inventory")
+
+            # Get current price for calculations
+            current_price = await inventory_manager._get_current_price(symbol)
+            if current_price <= 0:
+                current_price = (
+                    usdt_reserve / asset_quantity if asset_quantity > 0 else 100.0
+                )
+
+            # Determine grid spacing
+            default_spacing = 0.025  # 2.5% default
+            if symbol == "SOLUSDT":
+                default_spacing = 0.030
+            elif symbol == "ADAUSDT":
+                default_spacing = 0.028
+
+            # Create proper AssetInventory object
+            inventory_manager.inventories[symbol] = AssetInventory(
+                symbol=symbol,
+                total_allocation=total_capital,
+                usdt_balance=usdt_reserve,
+                asset_balance=asset_quantity,
+                reserved_usdt=0.0,
+                reserved_asset=0.0,
+                grid_spacing=default_spacing,
+                order_size_base=total_capital / 10,
+                grid_levels=10,
+            )
+
+            self.logger.info(f"✅ Emergency repair completed for {symbol}")
+            self.logger.info(f"   Type: {type(inventory_manager.inventories[symbol])}")
+            self.logger.info(f"   USDT: ${usdt_reserve:.2f}")
+            self.logger.info(f"   Asset: {asset_quantity:.4f}")
+
+        except Exception as e:
+            self.logger.error(f"❌ Emergency repair failed: {e}")
+            raise
 
     async def _use_actual_binance_balances(
         self, client_id: int, symbol: str, grid_orchestrator
@@ -460,83 +548,18 @@ class EnhancedPureUSDTGridInitializer:
         init_result: Dict,
     ) -> Dict:
         """
-        FIXED: Start advanced grid with Pure USDT state properly synced
-
-        This tells the Advanced Grid: "Hey, you already have 466 ADA + $400 USDT from Pure USDT"
+        🔧 FIXED: Start advanced grid with Pure USDT state properly synced
         """
         try:
             self.logger.info("🚀 Starting Advanced Grid with Pure USDT Sync...")
 
-            # Extract Pure USDT state
-            usdt_reserve = init_result["initialization"]["usdt_reserve"]
-            asset_quantity = init_result["initialization"]["asset_quantity"]
-            asset_cost_basis = init_result["initialization"]["asset_cost_basis"]
-
-            self.logger.info("📊 Pure USDT State to Sync:")
-            self.logger.info(f"   USDT Available: ${usdt_reserve:.2f}")
-            self.logger.info(
-                f"   Asset Purchased: {asset_quantity:.4f} {symbol.replace('USDT', '')}"
-            )
-            self.logger.info(f"   Asset Cost Basis: ${asset_cost_basis:.4f}")
-
-            # CRITICAL: Create or get the advanced manager FIRST
-            if client_id not in grid_orchestrator.advanced_managers:
-                success = await grid_orchestrator.create_advanced_manager(client_id)
-                if not success:
-                    return {
-                        "success": False,
-                        "error": "Failed to create advanced manager",
-                    }
-
-            manager = grid_orchestrator.advanced_managers[client_id]
-
-            # METHOD 1: Update manager's inventory before starting grid
-            try:
-                await self._sync_manager_with_pure_usdt_state(
-                    manager, symbol, usdt_reserve, asset_quantity, asset_cost_basis
-                )
-                self.logger.info("✅ Manager synced with Pure USDT state")
-            except Exception as sync_error:
-                self.logger.error(f"❌ Manager sync error: {sync_error}")
-
-            # METHOD 2: Start grid with corrected capital that matches available funds
-            effective_capital = usdt_reserve + (asset_quantity * asset_cost_basis)
-            self.logger.info(
-                f"💰 Effective capital based on Pure USDT: ${effective_capital:.2f}"
+            # Use the PureUSDTAdvancedSync to handle the sync properly
+            sync_handler = PureUSDTAdvancedSync()
+            sync_result = await sync_handler.sync_pure_usdt_with_advanced_grid(
+                client_id, symbol, total_capital, init_result, grid_orchestrator
             )
 
-            # Use a custom grid start that knows about Pure USDT
-            symbol_short = symbol.replace("USDT", "")
-
-            # Option A: Use existing force command with corrected capital
-            force_command = f"FORCE {symbol_short} {effective_capital}"
-
-            self.logger.info(f"🎯 Starting grid with synced state: {force_command}")
-
-            result = await grid_orchestrator.force_start_grid(client_id, force_command)
-
-            if result.get("success"):
-                return {
-                    "success": True,
-                    "method": "pure_usdt_synced",
-                    "pure_usdt_state": {
-                        "usdt_reserve": usdt_reserve,
-                        "asset_quantity": asset_quantity,
-                        "asset_cost_basis": asset_cost_basis,
-                    },
-                    "effective_capital": effective_capital,
-                    "grid_result": result,
-                    "message": "Advanced grid started with Pure USDT state synced",
-                }
-            else:
-                # Fallback: Return Pure USDT success even if advanced grid fails
-                return {
-                    "success": True,
-                    "method": "pure_usdt_only",
-                    "message": "Pure USDT FIFO tracking active. Grid sync in progress.",
-                    "pure_usdt_active": True,
-                    "sync_error": result.get("error"),
-                }
+            return sync_result
 
         except Exception as e:
             self.logger.error(f"❌ Advanced grid sync error: {e}")
@@ -555,7 +578,7 @@ class EnhancedPureUSDTGridInitializer:
         asset_quantity: float,
         asset_cost_basis: float,
     ):
-        """Sync the advanced manager with Pure USDT state"""
+        """🔧 FIXED: Sync the advanced manager with Pure USDT state WITHOUT corrupting objects"""
         try:
             self.logger.info("🔗 Syncing manager with Pure USDT state...")
 
@@ -575,27 +598,41 @@ class EnhancedPureUSDTGridInitializer:
                 "initialized": True,
             }
 
-            # Update inventory manager if it exists
+            # 🔧 CRITICAL FIX: Update inventory manager WITHOUT corrupting objects
             if hasattr(manager, "inventory_manager") and manager.inventory_manager:
                 try:
-                    # Focus only on the symbol we're trading
-                    if hasattr(manager.inventory_manager, "inventories"):
-                        # Clear other symbols and focus on our Pure USDT symbol
-                        manager.inventory_manager.inventories = {
-                            symbol: {
-                                "total_allocation": usdt_reserve
-                                + (asset_quantity * asset_cost_basis),
-                                "usdt_balance": usdt_reserve,
-                                "asset_balance": asset_quantity,
-                                "reserved_usdt": 0.0,
-                                "reserved_asset": 0.0,
-                                "symbol": symbol,
-                            }
-                        }
+                    inventory_manager = manager.inventory_manager
 
-                    self.logger.info(f"✅ Updated inventory manager for {symbol}")
-                    self.logger.info(f"   USDT: ${usdt_reserve:.2f}")
-                    self.logger.info(f"   Assets: {asset_quantity:.4f}")
+                    # Ensure symbol tracking exists
+                    if not inventory_manager.has_tracking(symbol):
+                        total_capital = usdt_reserve + (
+                            asset_quantity * asset_cost_basis
+                        )
+                        await inventory_manager.add_symbol_tracking(
+                            symbol, total_capital
+                        )
+
+                    # ✅ SAFE UPDATE: Only update attributes, never replace the object
+                    if symbol in inventory_manager.inventories:
+                        inventory = inventory_manager.inventories[symbol]
+
+                        # Verify it's still an AssetInventory object
+                        if isinstance(inventory, AssetInventory):
+                            inventory.usdt_balance = usdt_reserve
+                            inventory.asset_balance = asset_quantity
+                            inventory.reserved_usdt = 0.0
+                            inventory.reserved_asset = 0.0
+
+                            self.logger.info(
+                                f"✅ SAFELY updated inventory for {symbol}"
+                            )
+                            self.logger.info(f"   Type preserved: {type(inventory)}")
+                            self.logger.info(f"   USDT: ${usdt_reserve:.2f}")
+                            self.logger.info(f"   Assets: {asset_quantity:.4f}")
+                        else:
+                            self.logger.error(
+                                f"❌ Inventory corrupted for {symbol}: {type(inventory)}"
+                            )
 
                 except Exception as inv_error:
                     self.logger.error(f"❌ Inventory update error: {inv_error}")
@@ -840,3 +877,295 @@ class EnhancedGridInitializationOrchestrator:
         except Exception as e:
             self.logger.error(f"❌ Enhanced orchestration error: {e}")
             return {"success": False, "error": str(e)}
+
+
+# 🔧 DIAGNOSTIC AND REPAIR UTILITIES
+class InventoryDiagnostic:
+    """Diagnostic utilities for inventory health checking and repair"""
+
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+
+    def diagnose_inventory_health(self, inventory_manager) -> Dict:
+        """Comprehensive inventory health diagnosis"""
+        try:
+            diagnosis = {
+                "timestamp": time.time(),
+                "overall_health": "unknown",
+                "manager_type": str(type(inventory_manager)),
+                "has_inventories": hasattr(inventory_manager, "inventories"),
+                "symbols": {},
+                "corrupted_symbols": [],
+                "healthy_symbols": [],
+                "errors": [],
+            }
+
+            if not hasattr(inventory_manager, "inventories"):
+                diagnosis["overall_health"] = "critical"
+                diagnosis["errors"].append("No inventories attribute found")
+                return diagnosis
+
+            inventories = inventory_manager.inventories
+            diagnosis["inventories_type"] = str(type(inventories))
+            diagnosis["symbol_count"] = len(inventories)
+
+            # Check each symbol
+            for symbol, inventory in inventories.items():
+                symbol_diagnosis = {
+                    "type": str(type(inventory)),
+                    "is_asset_inventory": isinstance(inventory, AssetInventory),
+                    "has_usdt_balance": hasattr(inventory, "usdt_balance"),
+                    "has_order_size_base": hasattr(inventory, "order_size_base"),
+                    "status": "unknown",
+                }
+
+                if isinstance(inventory, AssetInventory):
+                    symbol_diagnosis["status"] = "healthy"
+                    symbol_diagnosis["usdt_balance"] = inventory.usdt_balance
+                    symbol_diagnosis["asset_balance"] = inventory.asset_balance
+                    diagnosis["healthy_symbols"].append(symbol)
+                elif isinstance(inventory, dict):
+                    symbol_diagnosis["status"] = "corrupted_dict"
+                    symbol_diagnosis["dict_keys"] = list(inventory.keys())
+                    diagnosis["corrupted_symbols"].append(symbol)
+                else:
+                    symbol_diagnosis["status"] = "unknown_type"
+                    diagnosis["corrupted_symbols"].append(symbol)
+
+                diagnosis["symbols"][symbol] = symbol_diagnosis
+
+            # Overall health assessment
+            if len(diagnosis["corrupted_symbols"]) == 0:
+                diagnosis["overall_health"] = "healthy"
+            elif len(diagnosis["healthy_symbols"]) == 0:
+                diagnosis["overall_health"] = "critical"
+            else:
+                diagnosis["overall_health"] = "partial_corruption"
+
+            return diagnosis
+
+        except Exception as e:
+            self.logger.error(f"❌ Diagnosis failed: {e}")
+            return {
+                "overall_health": "diagnostic_failed",
+                "error": str(e),
+                "timestamp": time.time(),
+            }
+
+    async def repair_corrupted_inventories(
+        self, inventory_manager, total_capital: float = 800.0
+    ) -> Dict:
+        """Repair corrupted inventory objects"""
+        try:
+            self.logger.info("🔧 Starting inventory repair process...")
+
+            diagnosis = self.diagnose_inventory_health(inventory_manager)
+
+            if diagnosis["overall_health"] == "healthy":
+                self.logger.info("✅ All inventories are healthy - no repair needed")
+                return {
+                    "success": True,
+                    "repairs_needed": False,
+                    "message": "All healthy",
+                }
+
+            repairs_made = []
+            repair_failures = []
+
+            for symbol in diagnosis["corrupted_symbols"]:
+                try:
+                    self.logger.info(f"🔧 Repairing {symbol}...")
+
+                    # Get corrupted data
+                    corrupted_data = inventory_manager.inventories[symbol]
+
+                    # Extract values from corrupted object
+                    if isinstance(corrupted_data, dict):
+                        usdt_balance = corrupted_data.get(
+                            "usdt_balance", total_capital * 0.5
+                        )
+                        asset_balance = corrupted_data.get(
+                            "asset_balance", 2.5
+                        )  # Default for SOL
+                        reserved_usdt = corrupted_data.get("reserved_usdt", 0.0)
+                        reserved_asset = corrupted_data.get("reserved_asset", 0.0)
+                    else:
+                        # Use defaults
+                        usdt_balance = total_capital * 0.5
+                        asset_balance = 2.5 if symbol == "SOLUSDT" else 1.0
+                        reserved_usdt = 0.0
+                        reserved_asset = 0.0
+
+                    # Calculate missing values
+                    if symbol == "SOLUSDT":
+                        grid_spacing = 0.030
+                    elif symbol == "ADAUSDT":
+                        grid_spacing = 0.028
+                    else:
+                        grid_spacing = 0.025
+
+                    # Create proper AssetInventory object
+                    inventory_manager.inventories[symbol] = AssetInventory(
+                        symbol=symbol,
+                        total_allocation=total_capital,
+                        usdt_balance=usdt_balance,
+                        asset_balance=asset_balance,
+                        reserved_usdt=reserved_usdt,
+                        reserved_asset=reserved_asset,
+                        grid_spacing=grid_spacing,
+                        order_size_base=total_capital / 10,
+                        grid_levels=10,
+                    )
+
+                    repairs_made.append(
+                        {
+                            "symbol": symbol,
+                            "usdt_balance": usdt_balance,
+                            "asset_balance": asset_balance,
+                            "status": "repaired",
+                        }
+                    )
+
+                    self.logger.info(f"✅ Repaired {symbol} successfully")
+
+                except Exception as repair_error:
+                    repair_failures.append(
+                        {"symbol": symbol, "error": str(repair_error)}
+                    )
+                    self.logger.error(f"❌ Failed to repair {symbol}: {repair_error}")
+
+            # Final verification
+            final_diagnosis = self.diagnose_inventory_health(inventory_manager)
+
+            return {
+                "success": len(repair_failures) == 0,
+                "repairs_made": len(repairs_made),
+                "repair_failures": len(repair_failures),
+                "repaired_symbols": [r["symbol"] for r in repairs_made],
+                "failed_symbols": [f["symbol"] for f in repair_failures],
+                "final_health": final_diagnosis["overall_health"],
+                "details": {"repairs": repairs_made, "failures": repair_failures},
+            }
+
+        except Exception as e:
+            self.logger.error(f"❌ Repair process failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "Repair process failed",
+            }
+
+    def emergency_inventory_reset(
+        self, inventory_manager, symbols_config: Dict
+    ) -> Dict:
+        """Emergency reset of entire inventory system"""
+        try:
+            self.logger.warning("🚨 EMERGENCY INVENTORY RESET INITIATED")
+
+            # Backup existing state
+            backup = {}
+            if hasattr(inventory_manager, "inventories"):
+                for symbol, inventory in inventory_manager.inventories.items():
+                    if hasattr(inventory, "usdt_balance"):
+                        backup[symbol] = {
+                            "usdt_balance": inventory.usdt_balance,
+                            "asset_balance": inventory.asset_balance,
+                        }
+                    elif isinstance(inventory, dict):
+                        backup[symbol] = inventory.copy()
+
+            # Reset inventories
+            inventory_manager.inventories = {}
+
+            # Recreate all symbols
+            recreated = []
+            for symbol, config in symbols_config.items():
+                try:
+                    total_allocation = config.get("total_allocation", 800.0)
+                    usdt_balance = config.get("usdt_balance", total_allocation * 0.5)
+                    asset_balance = config.get("asset_balance", 2.5)
+                    grid_spacing = config.get("grid_spacing", 0.025)
+
+                    inventory_manager.inventories[symbol] = AssetInventory(
+                        symbol=symbol,
+                        total_allocation=total_allocation,
+                        usdt_balance=usdt_balance,
+                        asset_balance=asset_balance,
+                        reserved_usdt=0.0,
+                        reserved_asset=0.0,
+                        grid_spacing=grid_spacing,
+                        order_size_base=total_allocation / 10,
+                        grid_levels=10,
+                    )
+                    recreated.append(symbol)
+
+                except Exception as symbol_error:
+                    self.logger.error(f"❌ Failed to recreate {symbol}: {symbol_error}")
+
+            return {
+                "success": True,
+                "method": "emergency_reset",
+                "backup_created": backup,
+                "symbols_recreated": recreated,
+                "message": f"Emergency reset completed - {len(recreated)} symbols recreated",
+            }
+
+        except Exception as e:
+            self.logger.error(f"❌ Emergency reset failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "Emergency reset failed",
+            }
+
+
+# 🔧 QUICK ACCESS FUNCTIONS
+def quick_diagnose_inventory(grid_orchestrator, client_id: int = 485825055):
+    """Quick diagnostic function"""
+    try:
+        if client_id not in grid_orchestrator.advanced_managers:
+            return {"error": "No manager found"}
+
+        manager = grid_orchestrator.advanced_managers[client_id]
+        if not hasattr(manager, "inventory_manager"):
+            return {"error": "No inventory manager found"}
+
+        diagnostic = InventoryDiagnostic()
+        return diagnostic.diagnose_inventory_health(manager.inventory_manager)
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def quick_repair_inventory(grid_orchestrator, client_id: int = 485825055):
+    """Quick repair function"""
+    try:
+        if client_id not in grid_orchestrator.advanced_managers:
+            return {"error": "No manager found"}
+
+        manager = grid_orchestrator.advanced_managers[client_id]
+        if not hasattr(manager, "inventory_manager"):
+            return {"error": "No inventory manager found"}
+
+        diagnostic = InventoryDiagnostic()
+        return await diagnostic.repair_corrupted_inventories(manager.inventory_manager)
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# Example usage functions
+"""
+# In your main code, you can now use:
+
+from services.usdt_initializer import quick_diagnose_inventory, quick_repair_inventory
+
+# Check inventory health
+diagnosis = quick_diagnose_inventory(your_grid_orchestrator)
+print(f"Inventory health: {diagnosis.get('overall_health')}")
+
+# Repair if needed
+if diagnosis.get('overall_health') != 'healthy':
+    repair_result = await quick_repair_inventory(your_grid_orchestrator)
+    print(f"Repair success: {repair_result.get('success')}")
+"""

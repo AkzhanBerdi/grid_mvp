@@ -1,10 +1,12 @@
 # services/grid_trading_engine.py
 
 import logging
+import time
 from typing import Dict, Optional
 
 from binance.client import Client
 
+from models.grid_config import validate_grid_config
 from services.fifo_service import FIFOService
 from services.grid_utils import GridUtilityService
 
@@ -29,11 +31,60 @@ class GridTradingEngine:
             "🔧 EnhancedGridTradingEngine initialized with advanced error handling"
         )
 
+        self.corruption_monitor = RuntimeCorruptionMonitor(self.logger)
+
+        self.logger.info(
+            "🔧 EnhancedGridTradingEngine initialized with runtime corruption monitoring"
+        )
+
+        # Add SOL-specific corruption tracking
+        self.sol_tracker = SOLCorruptionTracker(self.logger)
+
+        self.logger.info(
+            "🔧 GridTradingEngine initialized with SOL corruption tracking"
+        )
+
     def set_managers(self, inventory_manager, compound_manager):
-        """🔧 FIX: Set manager references from GridManager"""
+        """🔧 FIX: Set manager references from GridManager with validation"""
+        self.logger.info("🔧 Setting managers:")
+        self.logger.info(f"   Inventory manager type: {type(inventory_manager)}")
+        self.logger.info(f"   Compound manager type: {type(compound_manager)}")
+
+        # Validate inventory manager before setting
+        if inventory_manager is None:
+            self.logger.error("❌ Received None as inventory_manager!")
+        elif isinstance(inventory_manager, dict):
+            self.logger.error("❌ Received dict as inventory_manager - this is wrong!")
+            self.logger.error(f"   Dict keys: {list(inventory_manager.keys())}")
+            # Don't set it if it's wrong
+            return False
+        elif not hasattr(inventory_manager, "has_tracking"):
+            self.logger.error(
+                "❌ Inventory manager missing required 'has_tracking' method!"
+            )
+            return False
+        elif not hasattr(inventory_manager, "update_after_fill"):
+            self.logger.error(
+                "❌ Inventory manager missing required 'update_after_fill' method!"
+            )
+            return False
+        else:
+            self.logger.info("✅ Inventory manager validation passed")
+
+        # Set the managers
         self.inventory_manager = inventory_manager
         self.compound_manager = compound_manager
-        self.logger.info("✅ Managers injected into GridTradingEngine")
+
+        # Immediate verification
+        self.logger.info("✅ Managers set successfully:")
+        self.logger.info(
+            f"   self.inventory_manager type: {type(self.inventory_manager)}"
+        )
+        self.logger.info(
+            f"   Has required methods: {hasattr(self.inventory_manager, 'has_tracking') and hasattr(self.inventory_manager, 'update_after_fill')}"
+        )
+
+        return True
 
     async def execute_initial_50_50_split(
         self, symbol: str, total_capital: float, current_price: float
@@ -474,37 +525,240 @@ class GridTradingEngine:
             self.logger.error(f"❌ Grid setup error: {e}")
             return {"success": False, "error": str(e)}
 
+    # Add this method to compare SOL vs other symbols
+    def compare_symbol_states(self, symbols=["ADAUSDT", "ETHUSDT", "SOLUSDT"]):
+        """Compare inventory states across different symbols"""
+        self.logger.error("🔍 SYMBOL STATE COMPARISON:")
+
+        for symbol in symbols:
+            try:
+                if self.inventory_manager and hasattr(
+                    self.inventory_manager, "has_tracking"
+                ):
+                    has_tracking = self.inventory_manager.has_tracking(symbol)
+                    self.logger.error(f"   {symbol}: has_tracking={has_tracking}")
+
+                    if has_tracking and hasattr(
+                        self.inventory_manager, "get_inventory_status"
+                    ):
+                        try:
+                            status = self.inventory_manager.get_inventory_status(symbol)
+                            self.logger.error(
+                                f"   {symbol}: status={status.get('can_buy', 'unknown')}/{status.get('can_sell', 'unknown')}"
+                            )
+                        except Exception as status_error:
+                            self.logger.error(
+                                f"   {symbol}: status_error={status_error}"
+                            )
+                else:
+                    self.logger.error(f"   {symbol}: inventory_manager invalid")
+
+            except Exception as e:
+                self.logger.error(f"   {symbol}: comparison_error={e}")
+
     async def check_and_replace_filled_orders(self, symbol: str, grid_config):
-        """🔧 FIXED: Check for filled orders and replace them with proper inventory tracking"""
+        """🔍 ENHANCED: Special SOL corruption tracking"""
         try:
-            # Check both buy and sell levels
-            for level in grid_config.buy_levels + grid_config.sell_levels:
+            # 🔍 SPECIAL: Extra debugging for SOL
+            if symbol == "SOLUSDT":
+                self.logger.error("🔍 SOL SPECIAL DEBUG: Starting order check")
+                self.logger.error(
+                    f"   Inventory manager type: {type(self.inventory_manager)}"
+                )
+                self.logger.error(
+                    f"   Inventory manager ID: {id(self.inventory_manager)}"
+                )
+
+                if isinstance(self.inventory_manager, dict):
+                    self.logger.error("🚨 SOL CORRUPTION CONFIRMED!")
+                    self.logger.error(
+                        f"   Dict keys: {list(self.inventory_manager.keys())}"
+                    )
+                    self.logger.error("   This should NOT be a dict!")
+                    return
+
+                # Check if inventory manager has the expected methods
+                if not hasattr(self.inventory_manager, "has_tracking"):
+                    self.logger.error(
+                        "🚨 SOL: inventory_manager missing has_tracking method!"
+                    )
+                    return
+
+                # Check if SOL tracking exists
+                try:
+                    has_sol_tracking = self.inventory_manager.has_tracking("SOLUSDT")
+                    self.logger.error(
+                        f"🔍 SOL: has_tracking result: {has_sol_tracking}"
+                    )
+                except Exception as tracking_error:
+                    self.logger.error(
+                        f"🚨 SOL: Error checking tracking: {tracking_error}"
+                    )
+                    return
+
+            # Normal processing for all symbols
+            all_levels = grid_config.buy_levels + grid_config.sell_levels
+
+            for level in all_levels:
                 if not level.get("order_id") or level.get("filled"):
                     continue
 
                 try:
+                    # 🔍 SOL SPECIAL: Check corruption before EACH order check
+                    if symbol == "SOLUSDT":
+                        if isinstance(self.inventory_manager, dict):
+                            self.logger.error(
+                                f"🚨 SOL CORRUPTION during order {level.get('order_id')} check!"
+                            )
+                            return
+
                     # Check order status
                     order = self.binance_client.get_order(
                         symbol=symbol, orderId=level["order_id"]
                     )
 
                     if order["status"] == "FILLED":
+                        self.logger.info(
+                            f"🔍 Processing FILLED order {order['orderId']} for {symbol}"
+                        )
+
+                        # 🔍 SOL SPECIAL: Check corruption right before handling fill
+                        if symbol == "SOLUSDT":
+                            self.logger.error(
+                                f"🔍 SOL: About to handle fill for order {order['orderId']}"
+                            )
+                            self.logger.error(
+                                f"   Inventory manager type: {type(self.inventory_manager)}"
+                            )
+
+                            if isinstance(self.inventory_manager, dict):
+                                self.logger.error(
+                                    "🚨 SOL CORRUPTION just before handling fill!"
+                                )
+                                self.logger.error(
+                                    "   This is where the error will occur!"
+                                )
+                                continue  # Skip to prevent crash
+
                         await self._handle_filled_order(
                             symbol, level, order, grid_config
                         )
+
+                        # 🔍 SOL SPECIAL: Check corruption after handling fill
+                        if symbol == "SOLUSDT":
+                            if isinstance(self.inventory_manager, dict):
+                                self.logger.error(
+                                    "🚨 SOL CORRUPTION occurred DURING fill handling!"
+                                )
 
                 except Exception as e:
                     self.logger.error(
                         f"❌ Error checking order {level.get('order_id')}: {e}"
                     )
 
+                    # 🔍 SOL SPECIAL: Check if corruption happened during error
+                    if symbol == "SOLUSDT":
+                        self.logger.error(
+                            "🔍 SOL: Error occurred, checking corruption state"
+                        )
+                        self.logger.error(
+                            f"   Inventory manager type: {type(self.inventory_manager)}"
+                        )
+
         except Exception as e:
             self.logger.error(f"❌ Error checking filled orders for {symbol}: {e}")
+
+    # Add periodic corruption reporting:
+    async def report_corruption_status(self):
+        """Report corruption monitoring status"""
+        try:
+            report = self.corruption_monitor.get_corruption_report()
+
+            if report["total_events"] > 0:
+                self.logger.error("🚨 CORRUPTION REPORT:")
+                self.logger.error(f"   Total events: {report['total_events']}")
+                self.logger.error(
+                    f"   Most affected symbol: {report['patterns'].get('most_affected_symbol', 'N/A')}"
+                )
+                self.logger.error(
+                    f"   Most common context: {report['patterns'].get('most_common_context', 'N/A')}"
+                )
+                self.logger.error(
+                    f"   Recent events (1h): {report['patterns'].get('recent_events', 0)}"
+                )
+            else:
+                self.logger.info("✅ No corruption events detected")
+
+        except Exception as e:
+            self.logger.error(f"❌ Error generating corruption report: {e}")
+
+    def health_check_inventory_manager(self, context: str = "health_check"):
+        """Perform health check on inventory manager"""
+        try:
+            if not self.inventory_manager:
+                self.logger.warning(f"⚠️ {context}: inventory_manager is None")
+                return False
+
+            if isinstance(self.inventory_manager, dict):
+                self.logger.error(f"🚨 {context}: inventory_manager is dict!")
+                self.logger.error(f"   Keys: {list(self.inventory_manager.keys())}")
+                return False
+
+            if not hasattr(self.inventory_manager, "has_tracking"):
+                self.logger.error(
+                    f"🚨 {context}: inventory_manager missing has_tracking method!"
+                )
+                return False
+
+            if not hasattr(self.inventory_manager, "update_after_fill"):
+                self.logger.error(
+                    f"🚨 {context}: inventory_manager missing update_after_fill method!"
+                )
+                return False
+
+            # Test basic functionality
+            try:
+                tracked = self.inventory_manager.get_all_tracked_symbols()
+                self.logger.debug(
+                    f"✅ {context}: inventory_manager healthy, tracking {len(tracked)} symbols"
+                )
+            except Exception as method_error:
+                self.logger.error(
+                    f"🚨 {context}: inventory_manager method call failed: {method_error}"
+                )
+                return False
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"❌ {context}: Health check error: {e}")
+            return False
+
+    # Add periodic SOL corruption reporting
+    async def report_sol_corruption_status(self):
+        """Report SOL corruption timeline"""
+        try:
+            timeline = self.sol_tracker.get_corruption_timeline()
+
+            if timeline.get("corruption_detected"):
+                self.logger.error("🚨 SOL CORRUPTION TIMELINE:")
+                self.logger.error(
+                    f"   First detected at: {timeline['first_corruption_at']}"
+                )
+                self.logger.error(
+                    f"   Total events: {timeline['total_corruption_events']}"
+                )
+                self.logger.error(f"   Recent states: {timeline['recent_states']}")
+            else:
+                self.logger.info("✅ SOL: No corruption detected")
+
+        except Exception as e:
+            self.logger.error(f"❌ Error reporting SOL status: {e}")
 
     async def _handle_filled_order(
         self, symbol: str, level: dict, order: dict, grid_config
     ):
-        """🔧 FIXED: Handle filled order with proper inventory and replacement logic"""
+        """Handle filled order with pinpoint corruption tracking"""
         try:
             side = order["side"]
             quantity = float(order["executedQty"])
@@ -514,15 +768,62 @@ class GridTradingEngine:
                 f"💰 Enhanced {side} fill: Level {level['level']} - {quantity:.4f} @ ${price:.2f}"
             )
 
-            # 🔧 FIX 1: Update inventory if available
-            if self.inventory_manager and self.inventory_manager.has_tracking(symbol):
-                self.inventory_manager.update_after_fill(symbol, side, quantity, price)
+            # 🔍 CHECKPOINT 1: Before any inventory operations
+            if symbol == "SOLUSDT":
+                self.logger.error("🔍 SOL CHECKPOINT 1 - Before inventory operations:")
+                self.logger.error(f"   Type: {type(self.inventory_manager)}")
+                self.logger.error(f"   ID: {id(self.inventory_manager)}")
+
+            # Update inventory
+            if (
+                self.inventory_manager
+                and hasattr(self.inventory_manager, "has_tracking")
+                and not isinstance(self.inventory_manager, dict)
+            ):
+                if self.inventory_manager.has_tracking(symbol):
+                    # 🔍 CHECKPOINT 2: Just before update_after_fill call
+                    if symbol == "SOLUSDT":
+                        self.logger.error(
+                            "🔍 SOL CHECKPOINT 2 - About to call update_after_fill:"
+                        )
+                        self.logger.error(f"   Type: {type(self.inventory_manager)}")
+                        self.logger.error(f"   ID: {id(self.inventory_manager)}")
+                        self.logger.error(
+                            f"   Method exists: {hasattr(self.inventory_manager, 'update_after_fill')}"
+                        )
+
+                    # THIS IS WHERE THE CORRUPTION HAPPENS!
+                    self.inventory_manager.update_after_fill(
+                        symbol, side, quantity, price
+                    )
+
+                    # 🔍 CHECKPOINT 3: Just after update_after_fill call
+                    if symbol == "SOLUSDT":
+                        self.logger.error(
+                            "🔍 SOL CHECKPOINT 3 - After update_after_fill:"
+                        )
+                        self.logger.error(f"   Type: {type(self.inventory_manager)}")
+                        self.logger.error(f"   ID: {id(self.inventory_manager)}")
+
+                        if isinstance(self.inventory_manager, dict):
+                            self.logger.error(
+                                "🚨 CORRUPTION CONFIRMED! update_after_fill corrupted the object!"
+                            )
+                            self.logger.error(
+                                f"   Dict keys: {list(self.inventory_manager.keys())}"
+                            )
+
+                    self.logger.debug(f"✅ Successfully updated inventory for {symbol}")
+                else:
+                    self.logger.warning(
+                        f"⚠️ No tracking for {symbol} in inventory manager"
+                    )
             else:
-                self.logger.warning(
-                    f"⚠️ No inventory tracking for {symbol} - cannot update balances"
+                self.logger.error(
+                    f"❌ Skipping inventory update - invalid manager for {symbol}"
                 )
 
-            # 🔧 FIX 2: Record in FIFO with correct price
+            # Record in FIFO (this should always work)
             try:
                 await self.fifo_service.on_order_filled(
                     client_id=self.client_id,
@@ -531,7 +832,7 @@ class GridTradingEngine:
                     quantity=quantity,
                     price=price,
                     order_id=order["orderId"],
-                    level=level.get("level"),  # Pass the level number
+                    level=level.get("level"),
                 )
             except Exception as fifo_error:
                 self.logger.error(f"❌ FIFO recording error: {fifo_error}")
@@ -540,151 +841,225 @@ class GridTradingEngine:
             level["filled"] = True
             level["order_id"] = None
 
-            # 🔧 FIX 3: Create replacement order with proper validation
-            await self._create_replacement_order(symbol, level, side, grid_config)
+            # Create replacement order only if inventory manager is still valid
+            if not isinstance(self.inventory_manager, dict):
+                await self._create_replacement_order(symbol, level, side, grid_config)
+            else:
+                self.logger.error(
+                    "❌ Skipping replacement order - inventory manager corrupted"
+                )
 
         except Exception as e:
             self.logger.error(f"❌ Error handling filled order: {e}")
 
+            # 🔍 CHECKPOINT ERROR: Check state during error
+            if symbol == "SOLUSDT":
+                self.logger.error("🔍 SOL ERROR CHECKPOINT:")
+                self.logger.error(f"   Type: {type(self.inventory_manager)}")
+                if isinstance(self.inventory_manager, dict):
+                    self.logger.error(
+                        f"   Dict keys: {list(self.inventory_manager.keys())}"
+                    )
+
+    def diagnose_all_objects(self, symbol: str, context: str):
+        """Comprehensive object diagnosis"""
+        self.logger.info(f"🔍 COMPLETE DIAGNOSIS for {symbol} in {context}:")
+
+        # Grid config diagnosis
+        if symbol in getattr(self, "active_grids", {}):
+            grid_config = self.active_grids[symbol]
+            grid_valid = validate_grid_config(grid_config, context)
+            self.logger.info(
+                f"   Grid Config - Type: {type(grid_config)}, Valid: {grid_valid}, ID: {id(grid_config)}"
+            )
+
+            if hasattr(grid_config, "validate_integrity"):
+                integrity = grid_config.validate_integrity()
+                self.logger.info(f"   Grid Config Integrity: {integrity}")
+        else:
+            self.logger.info("   Grid Config - Not found in active_grids")
+
+        # Inventory manager diagnosis
+        inventory_valid = (
+            self.inventory_manager
+            and hasattr(self.inventory_manager, "has_tracking")
+            and not isinstance(self.inventory_manager, dict)
+        )
+        self.logger.info(
+            f"   Inventory Manager - Type: {type(self.inventory_manager)}, Valid: {inventory_valid}, ID: {id(self.inventory_manager)}"
+        )
+
+        if self.inventory_manager and hasattr(self.inventory_manager, "inventories"):
+            self.logger.info(
+                f"   Inventory Tracking - Has {symbol}: {self.inventory_manager.has_tracking(symbol)}"
+            )
+
+        return grid_valid and inventory_valid
+
+    def diagnose_inventory_manager(self):
+        """Enhanced diagnostic method to check inventory manager state"""
+        self.logger.info("🔍 INVENTORY MANAGER DIAGNOSIS:")
+        self.logger.info(f"   Type: {type(self.inventory_manager)}")
+        self.logger.info(f"   Is None: {self.inventory_manager is None}")
+        self.logger.info(f"   Is Dict: {isinstance(self.inventory_manager, dict)}")
+
+        if self.inventory_manager is not None:
+            self.logger.info(
+                f"   Has has_tracking: {hasattr(self.inventory_manager, 'has_tracking')}"
+            )
+            self.logger.info(
+                f"   Has update_after_fill: {hasattr(self.inventory_manager, 'update_after_fill')}"
+            )
+
+            # Show first few attributes/methods
+            if hasattr(self.inventory_manager, "__dict__"):
+                attrs = list(self.inventory_manager.__dict__.keys())[:5]  # First 5 only
+                self.logger.info(f"   Sample attributes: {attrs}")
+
+            # If it's a dict, show its keys
+            if isinstance(self.inventory_manager, dict):
+                keys = list(self.inventory_manager.keys())[:5]  # First 5 only
+                self.logger.error(f"❌ Dict keys (WRONG!): {keys}")
+
+    # Replace your _create_replacement_order method:
     async def _create_replacement_order(
         self, symbol: str, level: dict, original_side: str, grid_config
     ):
-        """🔧 FIXED: Create replacement order with proper inventory validation AND precision"""
+        """🔧 FIXED: Create replacement order with complete validation"""
         try:
-            # Determine opposite side for replacement
-            replacement_side = "SELL" if original_side == "BUY" else "BUY"
+            context = f"create_replacement_{symbol}_{original_side}"
 
-            # 🔧 FIX: Check inventory tracking before proceeding
-            if not self.inventory_manager or not self.inventory_manager.has_tracking(
-                symbol
-            ):
-                self.logger.warning(
-                    f"⚠️ Cannot create replacement {replacement_side} order: No inventory tracking for {symbol}"
+            # 🔧 CRITICAL: Validate both objects before proceeding
+            if not validate_grid_config(grid_config, context):
+                self.logger.error(
+                    f"❌ {context}: Invalid grid_config - aborting replacement order"
                 )
                 return
 
-            # Get optimal quantity for replacement order
-            try:
-                current_price = await self._get_current_price(symbol)
-                if not current_price:
-                    self.logger.error(f"❌ Cannot get current price for {symbol}")
-                    return
-
-                # Get exchange rules for precision (ADD THIS)
-                exchange_rules = await self.utility.get_exchange_rules_simple(symbol)
-                if not exchange_rules:
-                    self.logger.error(f"❌ Cannot get exchange rules for {symbol}")
-                    return
-
-                # Get optimal quantity using inventory manager
-                optimal_quantity = self.inventory_manager.get_optimal_quantity(
-                    symbol, replacement_side, current_price
-                )
-
-                if optimal_quantity <= 0:
-                    self.logger.warning(
-                        f"⚠️ Cannot create replacement {replacement_side} order: optimal quantity calculation failed"
-                    )
-                    return
-
-                # 🔧 ADD: Format quantity with proper precision
-                quantity_precision = exchange_rules.get("quantity_precision", 4)
-                formatted_quantity = round(optimal_quantity, quantity_precision)
-
-                # Validate inventory availability (use formatted quantity)
-                if replacement_side == "BUY":
-                    can_place, reason = self.inventory_manager.can_place_buy_order(
-                        symbol, formatted_quantity * current_price
-                    )
-                else:
-                    can_place, reason = self.inventory_manager.can_place_sell_order(
-                        symbol, formatted_quantity
-                    )
-
-                if not can_place:
-                    self.logger.warning(
-                        f"⚠️ Cannot place replacement {replacement_side} order: {reason}"
-                    )
-                    return
-
-                # Calculate replacement price (same level but opposite side)
-                grid_spacing = grid_config.grid_spacing
-                level_number = abs(level["level"])
-
-                if replacement_side == "BUY":
-                    # Place buy order below current price
-                    replacement_price = current_price * (
-                        1 - (grid_spacing * level_number)
-                    )
-                else:
-                    # Place sell order above current price
-                    replacement_price = current_price * (
-                        1 + (grid_spacing * level_number)
-                    )
-
-                # Round to proper precision using correct method
-                tick_size = exchange_rules.get("tick_size", 0.01)
-                replacement_price = self.utility.round_to_tick_size(
-                    replacement_price, tick_size
-                )
-
-                # 🔧 ADD: Format strings for Binance API
-                quantity_string = f"{formatted_quantity:.{quantity_precision}f}".rstrip(
-                    "0"
-                ).rstrip(".")
-                price_string = f"{replacement_price:.6f}".rstrip("0").rstrip(".")
-
-                # Ensure minimum precision (don't remove all decimal places)
-                if "." not in quantity_string and quantity_precision > 0:
-                    quantity_string = f"{formatted_quantity:.1f}"
-                if "." not in price_string:
-                    price_string = f"{replacement_price:.2f}"
-
-                # Reserve inventory (use formatted quantity)
-                if not self.inventory_manager.reserve_for_order(
-                    symbol, replacement_side, formatted_quantity, replacement_price
-                ):
-                    self.logger.warning(
-                        f"⚠️ Cannot reserve inventory for replacement {replacement_side} order"
-                    )
-                    return
-
-                # Place replacement order
-                try:
-                    if replacement_side == "BUY":
-                        order = self.binance_client.order_limit_buy(
-                            symbol=symbol,
-                            quantity=quantity_string,  # 🔧 FIXED: Use formatted string
-                            price=price_string,  # 🔧 FIXED: Use formatted string
-                        )
-                    else:
-                        order = self.binance_client.order_limit_sell(
-                            symbol=symbol,
-                            quantity=quantity_string,  # 🔧 FIXED: Use formatted string
-                            price=price_string,  # 🔧 FIXED: Use formatted string
-                        )
-
-                    # Update level with new order
-                    level["order_id"] = order["orderId"]
-                    level["filled"] = False
-                    level["price"] = replacement_price
-
-                    self.logger.info(
-                        f"✅ Replacement {replacement_side} order placed: {quantity_string} @ ${price_string} (ID: {order['orderId']})"
-                    )
-
-                except Exception as order_error:
-                    # Release reservation on failure
-                    self.inventory_manager.release_reservation(
-                        symbol, replacement_side, formatted_quantity, replacement_price
-                    )
-                    self.logger.error(
-                        f"❌ Failed to place replacement order: {order_error}"
-                    )
-
-            except Exception as calc_error:
+            if isinstance(self.inventory_manager, dict):
                 self.logger.error(
-                    f"❌ Error calculating optimal quantity for {replacement_side}: {calc_error}"
+                    f"❌ {context}: inventory_manager is dict - aborting replacement order"
+                )
+                return
+
+            if not self.inventory_manager or not hasattr(
+                self.inventory_manager, "has_tracking"
+            ):
+                self.logger.error(
+                    f"❌ {context}: Invalid inventory_manager - aborting replacement order"
+                )
+                return
+
+            if not self.inventory_manager.has_tracking(symbol):
+                self.logger.warning(f"⚠️ {context}: No inventory tracking for {symbol}")
+                return
+
+            # Determine opposite side for replacement
+            replacement_side = "SELL" if original_side == "BUY" else "BUY"
+
+            # Get current price and exchange rules
+            current_price = await self._get_current_price(symbol)
+            if not current_price:
+                self.logger.error(f"❌ {context}: Cannot get current price")
+                return
+
+            exchange_rules = await self.utility.get_exchange_rules_simple(symbol)
+            if not exchange_rules:
+                self.logger.error(f"❌ {context}: Cannot get exchange rules")
+                return
+
+            # Get optimal quantity using inventory manager
+            optimal_quantity = self.inventory_manager.get_optimal_quantity(
+                symbol, replacement_side, current_price
+            )
+
+            if optimal_quantity <= 0:
+                self.logger.warning(f"⚠️ {context}: Optimal quantity calculation failed")
+                return
+
+            # Format quantity with proper precision
+            quantity_precision = exchange_rules.get("quantity_precision", 4)
+            formatted_quantity = round(optimal_quantity, quantity_precision)
+
+            # Validate inventory availability
+            if replacement_side == "BUY":
+                can_place, reason = self.inventory_manager.can_place_buy_order(
+                    symbol, formatted_quantity * current_price
+                )
+            else:
+                can_place, reason = self.inventory_manager.can_place_sell_order(
+                    symbol, formatted_quantity
+                )
+
+            if not can_place:
+                self.logger.warning(f"⚠️ {context}: Cannot place order - {reason}")
+                return
+
+            # Calculate replacement price using VALIDATED grid_config
+            grid_spacing = grid_config.grid_spacing
+            level_number = abs(level["level"])
+
+            if replacement_side == "BUY":
+                replacement_price = current_price * (1 - (grid_spacing * level_number))
+            else:
+                replacement_price = current_price * (1 + (grid_spacing * level_number))
+
+            # Round to proper precision
+            tick_size = exchange_rules.get("tick_size", 0.01)
+            replacement_price = self.utility.round_to_tick_size(
+                replacement_price, tick_size
+            )
+
+            # Format strings for Binance API
+            quantity_string = f"{formatted_quantity:.{quantity_precision}f}".rstrip(
+                "0"
+            ).rstrip(".")
+            price_string = f"{replacement_price:.6f}".rstrip("0").rstrip(".")
+
+            # Ensure minimum precision
+            if "." not in quantity_string and quantity_precision > 0:
+                quantity_string = f"{formatted_quantity:.1f}"
+            if "." not in price_string:
+                price_string = f"{replacement_price:.2f}"
+
+            # Reserve inventory
+            if not self.inventory_manager.reserve_for_order(
+                symbol, replacement_side, formatted_quantity, replacement_price
+            ):
+                self.logger.warning(f"⚠️ {context}: Cannot reserve inventory")
+                return
+
+            # Place replacement order
+            try:
+                if replacement_side == "BUY":
+                    order = self.binance_client.order_limit_buy(
+                        symbol=symbol,
+                        quantity=quantity_string,
+                        price=price_string,
+                    )
+                else:
+                    order = self.binance_client.order_limit_sell(
+                        symbol=symbol,
+                        quantity=quantity_string,
+                        price=price_string,
+                    )
+
+                # Update level with new order
+                level["order_id"] = order["orderId"]
+                level["filled"] = False
+                level["price"] = replacement_price
+
+                self.logger.info(
+                    f"✅ Replacement {replacement_side} order placed: {quantity_string} @ ${price_string} (ID: {order['orderId']})"
+                )
+
+            except Exception as order_error:
+                # Release reservation on failure
+                self.inventory_manager.release_reservation(
+                    symbol, replacement_side, formatted_quantity, replacement_price
+                )
+                self.logger.error(
+                    f"❌ {context}: Failed to place order - {order_error}"
                 )
 
         except Exception as e:
@@ -769,3 +1144,133 @@ class GridTradingEngine:
                 "grid_utilization": 0,
                 "replacement_system": "error",
             }
+
+
+class RuntimeCorruptionMonitor:
+    """Monitor for corruption during actual trading operations"""
+
+    def __init__(self, logger):
+        self.logger = logger
+        self.last_check = {}
+        self.corruption_events = []
+
+    def check_before_order_processing(self, symbol: str, inventory_manager):
+        """Check inventory manager before processing orders for a symbol"""
+        context = f"before_order_processing_{symbol}"
+
+        if isinstance(inventory_manager, dict):
+            self.logger.error(f"🚨 CORRUPTION DETECTED: {context}")
+            self.logger.error(
+                f"   Inventory manager is dict: {list(inventory_manager.keys())}"
+            )
+            self.corruption_events.append(
+                {
+                    "time": time.time(),
+                    "context": context,
+                    "type": "dict_corruption",
+                    "symbol": symbol,
+                }
+            )
+            return False
+
+        return True
+
+    def check_after_fill_processing(
+        self, symbol: str, inventory_manager, order_id: str
+    ):
+        """Check inventory manager after processing a fill"""
+        context = f"after_fill_{symbol}_{order_id}"
+
+        if isinstance(inventory_manager, dict):
+            self.logger.error(f"🚨 CORRUPTION AFTER FILL: {context}")
+            self.logger.error(f"   Order ID: {order_id}")
+            self.logger.error(
+                f"   Inventory manager is dict: {list(inventory_manager.keys())}"
+            )
+            self.corruption_events.append(
+                {
+                    "time": time.time(),
+                    "context": context,
+                    "type": "post_fill_corruption",
+                    "symbol": symbol,
+                    "order_id": order_id,
+                }
+            )
+            return False
+
+        return True
+
+    def get_corruption_report(self):
+        """Get report of all corruption events"""
+        return {
+            "total_events": len(self.corruption_events),
+            "events": self.corruption_events[-10:],  # Last 10 events
+            "patterns": self._analyze_patterns(),
+        }
+
+    def _analyze_patterns(self):
+        """Analyze corruption patterns"""
+        if not self.corruption_events:
+            return {}
+
+        symbols = [event["symbol"] for event in self.corruption_events]
+        contexts = [event["context"] for event in self.corruption_events]
+
+        return {
+            "most_affected_symbol": max(set(symbols), key=symbols.count),
+            "most_common_context": max(set(contexts), key=contexts.count),
+            "recent_events": len(
+                [e for e in self.corruption_events if time.time() - e["time"] < 3600]
+            ),
+        }
+
+
+# Add this to track when SOL gets corrupted
+class SOLCorruptionTracker:
+    """Special tracker for SOL corruption"""
+
+    def __init__(self, logger):
+        self.logger = logger
+        self.sol_states = []
+        self.corruption_detected = False
+
+    def track_sol_state(self, context: str, inventory_manager):
+        """Track SOL-specific state"""
+        try:
+            state = {
+                "time": time.time(),
+                "context": context,
+                "type": type(inventory_manager).__name__,
+                "is_dict": isinstance(inventory_manager, dict),
+                "id": id(inventory_manager) if inventory_manager else None,
+            }
+
+            if isinstance(inventory_manager, dict):
+                state["dict_keys"] = list(inventory_manager.keys())
+                if not self.corruption_detected:
+                    self.logger.error(f"🚨 SOL CORRUPTION FIRST DETECTED at {context}!")
+                    self.corruption_detected = True
+
+            self.sol_states.append(state)
+
+            # Keep only last 20 states
+            if len(self.sol_states) > 20:
+                self.sol_states = self.sol_states[-20:]
+
+        except Exception as e:
+            self.logger.error(f"❌ Error tracking SOL state: {e}")
+
+    def get_corruption_timeline(self):
+        """Get timeline of SOL corruption"""
+        corruption_events = [s for s in self.sol_states if s["is_dict"]]
+
+        if corruption_events:
+            first_corruption = corruption_events[0]
+            return {
+                "first_corruption_at": first_corruption["context"],
+                "first_corruption_time": first_corruption["time"],
+                "total_corruption_events": len(corruption_events),
+                "recent_states": self.sol_states[-5:],
+            }
+
+        return {"corruption_detected": False, "recent_states": self.sol_states[-5:]}

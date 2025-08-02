@@ -1,24 +1,48 @@
 # services/inventory_manager.py
 import logging
-from dataclasses import dataclass
 from typing import Dict, Tuple
 
 from binance.client import Client
 
 
-@dataclass
 class AssetInventory:
-    """Track inventory for a single trading pair"""
+    """
+    🔧 FIXED: Track inventory for a single trading pair - NO @dataclass
+    """
 
-    symbol: str
-    total_allocation: float
-    usdt_balance: float
-    asset_balance: float
-    reserved_usdt: float
-    reserved_asset: float
-    grid_spacing: float
-    order_size_base: float
-    grid_levels: int = 10
+    def __init__(
+        self,
+        symbol: str,
+        total_allocation: float,
+        usdt_balance: float,
+        asset_balance: float,
+        reserved_usdt: float = 0.0,
+        reserved_asset: float = 0.0,
+        grid_spacing: float = 0.025,
+        order_size_base: float = 50.0,
+        grid_levels: int = 10,
+    ):
+        self.symbol = symbol
+        self.total_allocation = total_allocation
+        self.usdt_balance = usdt_balance
+        self.asset_balance = asset_balance
+        self.reserved_usdt = reserved_usdt
+        self.reserved_asset = reserved_asset
+        self.grid_spacing = grid_spacing
+        self.order_size_base = order_size_base
+        self.grid_levels = grid_levels
+
+        # Anti-corruption marker
+        self._is_asset_inventory = True
+
+    def validate_integrity(self) -> bool:
+        """Validate that this object hasn't been corrupted"""
+        return (
+            hasattr(self, "_is_asset_inventory")
+            and hasattr(self, "usdt_balance")
+            and hasattr(self, "asset_balance")
+            and not isinstance(self, dict)
+        )
 
 
 class SingleGridInventoryManager:
@@ -253,44 +277,100 @@ class SingleGridInventoryManager:
 
     def update_after_fill(self, symbol: str, side: str, quantity: float, price: float):
         """
-        🔧 CRITICAL FIX: Update inventory balances after order fills
-        This fixes the replacement order issue by keeping accurate balances
+        🔧 ENHANCED: Update inventory balances with corruption debugging
         """
-        inventory = self.inventories.get(symbol)
-        if not inventory:
-            self.logger.warning(
-                f"⚠️ No inventory tracking for {symbol} - cannot update after fill"
+        try:
+            # 🔍 DEBUG: Check self integrity at start
+            if symbol == "SOLUSDT":
+                self.logger.error(f"🔍 update_after_fill START - symbol: {symbol}")
+                self.logger.error(f"   self type: {type(self)}")
+                self.logger.error(f"   self id: {id(self)}")
+                self.logger.error(f"   inventories type: {type(self.inventories)}")
+
+            inventory = self.inventories.get(symbol)
+            if not inventory:
+                self.logger.warning(
+                    f"⚠️ No inventory tracking for {symbol} - cannot update after fill"
+                )
+                return
+
+            # 🔍 DEBUG: Check inventory object type
+            if symbol == "SOLUSDT":
+                self.logger.error("🔍 SOL inventory object:")
+                self.logger.error(f"   inventory type: {type(inventory)}")
+                self.logger.error(f"   inventory id: {id(inventory)}")
+
+            order_value = quantity * price
+
+            if side == "BUY":
+                # 🔍 DEBUG: Before BUY operations
+                if symbol == "SOLUSDT":
+                    self.logger.error("🔍 SOL BUY - Before operations:")
+                    self.logger.error(f"   usdt_balance: {inventory.usdt_balance}")
+                    self.logger.error(f"   asset_balance: {inventory.asset_balance}")
+
+                # Bought asset with USDT
+                inventory.usdt_balance -= order_value
+                inventory.asset_balance += quantity
+                inventory.reserved_usdt = max(
+                    0, inventory.reserved_usdt - order_value * 1.01
+                )
+
+                # 🔍 DEBUG: After BUY operations
+                if symbol == "SOLUSDT":
+                    self.logger.error("🔍 SOL BUY - After operations:")
+                    self.logger.error(f"   usdt_balance: {inventory.usdt_balance}")
+                    self.logger.error(f"   asset_balance: {inventory.asset_balance}")
+                    self.logger.error(f"   self type after BUY: {type(self)}")
+
+                self.logger.info(
+                    f"💰 {symbol} BUY FILL: -${order_value:.2f} USDT, +{quantity:.4f} asset"
+                )
+
+            elif side == "SELL":
+                # 🔍 DEBUG: Before SELL operations
+                if symbol == "SOLUSDT":
+                    self.logger.error("🔍 SOL SELL - Before operations:")
+                    self.logger.error(f"   usdt_balance: {inventory.usdt_balance}")
+                    self.logger.error(f"   asset_balance: {inventory.asset_balance}")
+
+                # Sold asset for USDT
+                inventory.usdt_balance += order_value
+                inventory.asset_balance -= quantity
+                inventory.reserved_asset = max(0, inventory.reserved_asset - quantity)
+
+                # 🔍 DEBUG: After SELL operations
+                if symbol == "SOLUSDT":
+                    self.logger.error("🔍 SOL SELL - After operations:")
+                    self.logger.error(f"   usdt_balance: {inventory.usdt_balance}")
+                    self.logger.error(f"   asset_balance: {inventory.asset_balance}")
+                    self.logger.error(f"   self type after SELL: {type(self)}")
+
+                self.logger.info(
+                    f"💰 {symbol} SELL FILL: +${order_value:.2f} USDT, -{quantity:.4f} asset"
+                )
+
+            # 🔍 DEBUG: Final check
+            if symbol == "SOLUSDT":
+                self.logger.error("🔍 update_after_fill END:")
+                self.logger.error(f"   self type: {type(self)}")
+                self.logger.error(f"   self id: {id(self)}")
+
+            # Log updated balances for debugging
+            self.logger.debug(
+                f"📊 {symbol} Updated: USDT=${inventory.usdt_balance:.2f}, Asset={inventory.asset_balance:.4f}"
             )
-            return
 
-        order_value = quantity * price
+        except Exception as e:
+            self.logger.error(f"❌ Error in update_after_fill for {symbol}: {e}")
 
-        if side == "BUY":
-            # Bought asset with USDT
-            inventory.usdt_balance -= order_value
-            inventory.asset_balance += quantity
-            inventory.reserved_usdt = max(
-                0, inventory.reserved_usdt - order_value * 1.01
-            )
+            # 🔍 DEBUG: Check state during error
+            if symbol == "SOLUSDT":
+                self.logger.error("🔍 update_after_fill ERROR:")
+                self.logger.error(f"   self type: {type(self)}")
+                import traceback
 
-            self.logger.info(
-                f"💰 {symbol} BUY FILL: -${order_value:.2f} USDT, +{quantity:.4f} asset"
-            )
-
-        elif side == "SELL":
-            # Sold asset for USDT
-            inventory.usdt_balance += order_value
-            inventory.asset_balance -= quantity
-            inventory.reserved_asset = max(0, inventory.reserved_asset - quantity)
-
-            self.logger.info(
-                f"💰 {symbol} SELL FILL: +${order_value:.2f} USDT, -{quantity:.4f} asset"
-            )
-
-        # Log updated balances for debugging
-        self.logger.debug(
-            f"📊 {symbol} Updated: USDT=${inventory.usdt_balance:.2f}, Asset={inventory.asset_balance:.4f}"
-        )
+                self.logger.error(f"   Stack trace: {traceback.format_exc()}")
 
     def get_optimal_order_size(
         self, symbol: str, side: str, current_price: float
