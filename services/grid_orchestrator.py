@@ -136,12 +136,6 @@ class GridOrchestrator:
                 fifo_service=self.fifo_service,  # ✅ Share the single instance
             )
 
-            # 🔍 DEBUG 1: Right after GridManager creation
-            self.logger.info(
-                "🔍 DEBUG: GridManager created, checking trading engine inventory manager..."
-            )
-            manager.trading_engine.diagnose_inventory_manager()  # Should show None
-
             # Store manager
             self.advanced_managers[client_id] = manager
 
@@ -168,15 +162,9 @@ class GridOrchestrator:
 
             # 🔍 DEBUG 2: Before executing force command
             manager = self.advanced_managers[client_id]
-            self.logger.info("🔍 DEBUG: Before force command execution...")
-            manager.trading_engine.diagnose_inventory_manager()  # Check state before
 
             # Execute command
             result = await manager.handle_force_command(command)
-
-            # 🔍 DEBUG 3: After executing force command (when inventory manager should be created)
-            self.logger.info("🔍 DEBUG: After force command execution...")
-            manager.trading_engine.diagnose_inventory_manager()  # Should show proper object now
 
             if result["success"]:
                 # Update client status
@@ -343,12 +331,6 @@ class GridOrchestrator:
                     "updated_grids": 0,
                 }
 
-            # 🔍 DEBUG: Before updating all grids
-            self.logger.info(
-                "🔍 DEBUG: Before update_all_grids - checking all managers..."
-            )
-            self.debug_all_managers()
-
             # Start monitoring if not active
             if not self.monitoring_active:
                 asyncio.create_task(self.start_monitoring())
@@ -357,12 +339,6 @@ class GridOrchestrator:
             updated_grids = 0
             for client_id, manager in self.advanced_managers.items():
                 try:
-                    # 🔍 DEBUG: Before each manager update
-                    self.logger.debug(
-                        f"🔍 DEBUG: Before updating manager for client {client_id}..."
-                    )
-                    manager.trading_engine.diagnose_inventory_manager()
-
                     await manager.monitor_and_update_grids()
                     updated_grids += 1
                 except Exception as e:
@@ -371,7 +347,6 @@ class GridOrchestrator:
                     self.logger.error(
                         f"🔍 DEBUG: After error for client {client_id}..."
                     )
-                    manager.trading_engine.diagnose_inventory_manager()
 
             return {
                 "success": True,
@@ -444,37 +419,7 @@ class GridOrchestrator:
         try:
             for client_id, manager in self.advanced_managers.items():
                 try:
-                    # Health check before monitoring
-                    if hasattr(
-                        manager.trading_engine, "health_check_inventory_manager"
-                    ):
-                        is_healthy = (
-                            manager.trading_engine.health_check_inventory_manager(
-                                f"monitoring_client_{client_id}"
-                            )
-                        )
-
-                        if not is_healthy:
-                            self.logger.error(
-                                f"🚨 Client {client_id} has unhealthy inventory manager!"
-                            )
-                            continue
-
                     await manager.monitor_and_update_grids()
-
-                    # Periodic corruption reporting (every 10 minutes)
-                    if hasattr(manager.trading_engine, "report_corruption_status"):
-                        if not hasattr(self, "_last_corruption_report"):
-                            self._last_corruption_report = {}
-
-                        if client_id not in self._last_corruption_report:
-                            self._last_corruption_report[client_id] = 0
-
-                        if (
-                            time.time() - self._last_corruption_report[client_id] > 600
-                        ):  # 10 minutes
-                            await manager.trading_engine.report_corruption_status()
-                            self._last_corruption_report[client_id] = time.time()
 
                 except Exception as e:
                     self.logger.error(
@@ -482,17 +427,6 @@ class GridOrchestrator:
                     )
         except Exception as e:
             self.logger.error(f"❌ System monitoring error: {e}")
-
-    # Add this new method to GridOrchestrator to help with debugging
-    def debug_all_managers(self):
-        """Debug all managers' inventory states"""
-        self.logger.info("🔍 DEBUG: Checking all managers...")
-        for client_id, manager in self.advanced_managers.items():
-            self.logger.info(f"🔍 DEBUG: Client {client_id} manager state:")
-            try:
-                manager.trading_engine.diagnose_inventory_manager()
-            except Exception as e:
-                self.logger.error(f"❌ Debug failed for client {client_id}: {e}")
 
     async def _perform_health_check(self):
         """Perform periodic health check"""
