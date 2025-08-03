@@ -410,7 +410,7 @@ Choose amount or type command like `ADA 1000`"""
         # Import required services
         from binance.client import Client
 
-        from repositories.trade_repository import EnhancedTradeRepository
+        from repositories.trade_repository import TradeRepository
         from services.fifo_service import FIFOService
         from services.usdt_initializer import (
             EnhancedGridInitializationOrchestrator,
@@ -426,7 +426,7 @@ Choose amount or type command like `ADA 1000`"""
         client_binance_client = Client(decrypted_api_key, decrypted_secret)
 
         # Create Pure USDT orchestrator
-        enhanced_trade_repo = EnhancedTradeRepository()
+        enhanced_trade_repo = TradeRepository()
         enhanced_fifo_service = FIFOService()
         orchestrator = EnhancedGridInitializationOrchestrator(
             client_binance_client, enhanced_trade_repo, enhanced_fifo_service
