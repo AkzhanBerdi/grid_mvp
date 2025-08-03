@@ -273,57 +273,51 @@ class VolatilityBasedRiskManager:
         self, base_order_size: float, base_grid_spacing: float
     ) -> Dict:
         """
-        Get risk-adjusted trading parameters based on current volatility
+        SIMPLIFIED: Only provide spacing adjustments, let SmartEngine handle order size
         """
         try:
             current_volatility = await self.calculate_current_volatility()
             regime = self.classify_volatility_regime(current_volatility)
-            multipliers = self.risk_multipliers[regime]
 
-            adjusted_order_size = base_order_size * multipliers["order_size"]
-            adjusted_grid_spacing = base_grid_spacing * multipliers["grid_spacing"]
+            # ONLY adjust spacing (no order size conflicts)
+            spacing_adjustment = 1.0
 
-            # Ensure minimum order size for Binance
-            adjusted_order_size = max(adjusted_order_size, 15.0)
+            if regime == "extreme":
+                spacing_adjustment = 1.4  # Much wider
+            elif regime == "high":
+                spacing_adjustment = 1.2  # Wider
+            elif regime == "low":
+                spacing_adjustment = 0.9  # Slightly tighter
 
-            # Ensure reasonable grid spacing bounds
-            adjusted_grid_spacing = max(0.01, min(0.08, adjusted_grid_spacing))
-
-            risk_score = self._calculate_risk_score(current_volatility, regime)
+            adjusted_spacing = base_grid_spacing * spacing_adjustment
+            adjusted_spacing = max(0.02, min(0.08, adjusted_spacing))  # Bounds
 
             result = {
                 "volatility": current_volatility,
                 "regime": regime,
-                "risk_score": risk_score,
-                "original_order_size": base_order_size,
-                "adjusted_order_size": round(adjusted_order_size, 2),
-                "original_grid_spacing": base_grid_spacing,
-                "adjusted_grid_spacing": round(adjusted_grid_spacing, 4),
-                "order_size_multiplier": multipliers["order_size"],
-                "grid_spacing_multiplier": multipliers["grid_spacing"],
-                "recommendation": self._get_risk_recommendation(regime, risk_score),
+                "adjusted_order_size": base_order_size,  # Don't change - let smart engine handle
+                "adjusted_grid_spacing": adjusted_spacing,
+                "order_size_multiplier": 1.0,  # No conflicts
+                "spacing_multiplier": spacing_adjustment,
             }
 
-            self.logger.info(f"🛡️ Risk adjustment for {self.symbol}:")
+            self.logger.info(f"🛡️ Volatility adjustment for {self.symbol}:")
             self.logger.info(f"   Volatility: {current_volatility:.3f} ({regime})")
             self.logger.info(
-                f"   Order size: ${base_order_size:.2f} → ${adjusted_order_size:.2f}"
+                f"   Grid spacing: {base_grid_spacing:.3f} → {adjusted_spacing:.3f}"
             )
-            self.logger.info(
-                f"   Grid spacing: {base_grid_spacing:.3f} → {adjusted_grid_spacing:.3f}"
-            )
+            self.logger.info("   Order sizing: Delegated to SmartEngine")
 
             return result
 
         except Exception as e:
-            self.logger.error(f"❌ Risk adjustment error: {e}")
+            self.logger.error(f"❌ Volatility adjustment error: {e}")
             return {
                 "volatility": 0.25,
                 "regime": "moderate",
-                "risk_score": 0.5,
                 "adjusted_order_size": base_order_size,
                 "adjusted_grid_spacing": base_grid_spacing,
-                "recommendation": "Using default parameters due to error",
+                "order_size_multiplier": 1.0,
             }
 
     def _calculate_risk_score(self, volatility: float, regime: str) -> float:

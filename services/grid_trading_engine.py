@@ -3,11 +3,12 @@
 Grid Trading Engine - Production Version
 ========================================
 
-Clean production version with all debug code and emergency fixes removed.
+Complete production version with enhanced replacement logic and all required methods.
 Handles advanced grid trading with proper order management.
 """
 
 import logging
+import time
 from typing import Dict, Optional
 
 from binance.client import Client
@@ -18,7 +19,7 @@ from services.grid_utils import GridUtilityService
 
 
 class GridTradingEngine:
-    """Production grid trading engine with proper inventory integration"""
+    """Production grid trading engine with enhanced profit capture"""
 
     def __init__(self, binance_client: Client, client_id: int):
         self.binance_client = binance_client
@@ -116,11 +117,17 @@ class GridTradingEngine:
     async def create_advanced_grid_levels(
         self, grid_config, current_price: float, optimal_config: Dict
     ) -> Dict:
-        """Create grid levels with proper notional compliance"""
+        """Create grid levels with SMART parameter optimization"""
         try:
             spacing = grid_config.grid_spacing
             base_order_size = optimal_config["base_order_size"]
 
+            # Log the smart optimization
+            optimization_factor = optimal_config.get("total_optimization_factor", 1.0)
+            if optimization_factor != 1.0:
+                self.logger.info(
+                    f"🧠 Smart optimization applied: {optimization_factor:.2f}x factor"
+                )
             # Ensure minimum notional compliance
             min_notional = 10.0
             safety_margin = 1.2
@@ -334,7 +341,7 @@ class GridTradingEngine:
     async def _place_single_order(
         self, symbol: str, level: Dict, exchange_rules: Dict
     ) -> bool:
-        """Place a single grid order"""
+        """Place a single grid order with proper validation"""
         try:
             # Validate order parameters
             validation_result = self.utility.validate_order_params(
@@ -421,17 +428,22 @@ class GridTradingEngine:
     async def _handle_filled_order(
         self, symbol: str, level: dict, order: dict, grid_config
     ):
-        """Handle filled order and create replacement"""
+        """🚀 ENHANCED: Handle filled order with actual price capture for profit optimization"""
         try:
             side = order["side"]
             quantity = float(order["executedQty"])
             price = float(order["price"])
 
             self.logger.info(
-                f"💰 {side} fill: Level {level['level']} - {quantity:.4f} @ ${price:.2f}"
+                f"💰 Enhanced {side} fill: Level {level['level']} - {quantity:.4f} @ ${price:.2f}"
             )
 
-            # Update inventory
+            # 🎯 CAPTURE ACTUAL FILL PRICE for enhanced replacement logic
+            level["actual_price"] = price
+            level["actual_quantity"] = quantity
+            level["fill_timestamp"] = order.get("updateTime", int(time.time() * 1000))
+
+            # Update inventory if available
             if self.inventory_manager and self.inventory_manager.has_tracking(symbol):
                 self.inventory_manager.update_after_fill(symbol, side, quantity, price)
             else:
@@ -457,7 +469,7 @@ class GridTradingEngine:
             level["filled"] = True
             level["order_id"] = None
 
-            # Create replacement order
+            # 🚀 Create enhanced replacement order with profit optimization
             await self._create_replacement_order(symbol, level, side, grid_config)
 
         except Exception as e:
@@ -466,7 +478,7 @@ class GridTradingEngine:
     async def _create_replacement_order(
         self, symbol: str, level: dict, original_side: str, grid_config
     ):
-        """Create replacement order with proper validation"""
+        """🚀 ENHANCED: Create replacement order with quick profit capture logic"""
         try:
             # Validate grid config
             if not validate_grid_config(grid_config, f"replacement_{symbol}"):
@@ -532,14 +544,33 @@ class GridTradingEngine:
                 )
                 return
 
-            # Calculate replacement price
+            # 🚀 ENHANCED REPLACEMENT LOGIC - QUICK PROFIT CAPTURE
             grid_spacing = grid_config.grid_spacing
             level_number = abs(level["level"])
 
-            if replacement_side == "BUY":
-                replacement_price = current_price * (1 - (grid_spacing * level_number))
+            # Get the actual filled price if available, otherwise use level price
+            actual_fill_price = level.get("actual_price") or level.get(
+                "price", current_price
+            )
+
+            if replacement_side == "SELL":
+                # 🎯 QUICK PROFIT CAPTURE: Place sell at filled price + small profit margin
+                profit_margin = 0.025  # 2.5% profit target (configurable)
+                replacement_price = actual_fill_price * (1 + profit_margin)
+
+                self.logger.info(
+                    f"💰 Quick profit SELL: Buy filled @ ${actual_fill_price:.6f}, "
+                    f"placing sell @ ${replacement_price:.6f} ({profit_margin * 100:.1f}% profit)"
+                )
+
             else:
-                replacement_price = current_price * (1 + (grid_spacing * level_number))
+                # 🔄 STANDARD BUY LOGIC: Place buy below current market
+                replacement_price = current_price * (1 - (grid_spacing * level_number))
+
+                self.logger.info(
+                    f"🔄 Standard BUY replacement: @ ${replacement_price:.6f} "
+                    f"({grid_spacing * level_number * 100:.1f}% below market)"
+                )
 
             # Round to proper precision
             tick_size = exchange_rules.get("tick_size", 0.01)
@@ -586,9 +617,25 @@ class GridTradingEngine:
                 level["filled"] = False
                 level["price"] = replacement_price
 
-                self.logger.info(
-                    f"✅ Replacement {replacement_side} order placed: {quantity_string} @ ${price_string} (ID: {order['orderId']})"
+                # 🏷️ Mark replacement type for analytics
+                level["replacement_type"] = (
+                    "quick_profit" if replacement_side == "SELL" else "standard_grid"
                 )
+
+                # 🎯 Enhanced logging with profit expectations
+                if replacement_side == "SELL":
+                    expected_profit = (
+                        replacement_price - actual_fill_price
+                    ) * formatted_quantity
+                    self.logger.info(
+                        f"✅ 💰 QUICK PROFIT {replacement_side} order: {quantity_string} @ ${price_string} "
+                        f"(ID: {order['orderId']}) - Expected profit: ${expected_profit:.2f}"
+                    )
+                else:
+                    self.logger.info(
+                        f"✅ 🔄 Standard {replacement_side} order: {quantity_string} @ ${price_string} "
+                        f"(ID: {order['orderId']}) - Grid level {level_number}"
+                    )
 
             except Exception as order_error:
                 # Release reservation on failure

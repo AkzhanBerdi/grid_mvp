@@ -50,41 +50,20 @@ class CompoundInterestManager:
         self, client_id: int, symbol: str, base_capital: float
     ) -> float:
         """
-        Calculate optimal order size using compound interest + Kelly Criterion
+        SIMPLIFIED: Return None to let SmartDecisionEngine handle sizing
+        This eliminates the conflict while keeping the manager available for other uses
         """
         try:
-            # FIXED: Remove 'await' - this is a sync method
-            performance = self._safe_get_performance_metrics(client_id)
-
-            # FIXED: Add 'await' - this IS an async method
-            kelly_fraction = await self._calculate_kelly_fraction(client_id, symbol)
-
-            # Calculate compound multiplier based on accumulated profits
-            compound_multiplier = self._calculate_compound_multiplier(client_id)
-
-            # Combine Kelly and compound factors
-            optimal_fraction = kelly_fraction * compound_multiplier
-
-            # Apply safety constraints
-            safe_fraction = self._apply_safety_constraints(
-                optimal_fraction, client_id, performance
-            )
-
-            # Calculate final order size with minimum enforcement
-            min_order_size = 10.0  # Exchange minimum
-            order_size = base_capital * safe_fraction
-            final_order_size = max(order_size, min_order_size)
-
-            # Additional safety: ensure we don't exceed 20% of capital per order
-            max_order_size = base_capital * 0.2
-            final_order_size = min(final_order_size, max_order_size)
-
+            # Let SmartDecisionEngine handle order sizing
+            # This eliminates the "drawdown protection -50%" chaos
             self.logger.info(
-                f"💰 Client {client_id} {symbol}: Kelly={kelly_fraction:.3f}, "
-                f"Compound={compound_multiplier:.2f}x, Final=${final_order_size:.2f}"
+                f"💰 Client {client_id} {symbol}: Using smart hierarchical sizing"
             )
+            return None  # Signal to use smart engine
 
-            return final_order_size
+        except Exception as e:
+            self.logger.error(f"❌ Compound manager error: {e}")
+            return None
 
         except Exception as e:
             self.logger.error(
@@ -472,32 +451,50 @@ class CompoundInterestManager:
             return f"Balanced ({win_rate:.0f}% win rate, ${total_profit:.0f} profit)"
 
     async def get_performance_summary(self, client_id: int) -> Dict:
-        """Get comprehensive performance summary for monitoring"""
+        """Simplified performance summary for dashboard"""
         try:
-            # FIXED: Remove 'await' - this is a sync method
             performance = self._safe_get_performance_metrics(client_id)
-
-            # FIXED: Add 'await' for async methods
-            kelly_ada = await self._calculate_kelly_fraction(client_id, "ADAUSDT")
-            kelly_avax = await self._calculate_kelly_fraction(client_id, "AVAXUSDT")
-
-            # This is sync, no await needed
-            compound_multiplier = self._calculate_compound_multiplier(client_id)
 
             return {
                 "total_profit": performance.get("total_profit", 0.0),
                 "total_trades": performance.get("total_trades", 0),
                 "win_rate": performance.get("win_rate", 0.0),
-                "compound_multiplier": compound_multiplier,
-                "kelly_fractions": {"ADA": kelly_ada, "AVAX": kelly_avax},
-                "current_status": "active" if compound_multiplier > 1.0 else "building",
-                "next_multiplier_at": (compound_multiplier * 25)
-                + 25,  # Next $25 milestone
+                "daily_target_progress": self._calculate_daily_progress(performance),
+                "user_message": self._get_user_message(performance),
+                "system_status": "🧠 Smart Optimization Active",
             }
 
         except Exception as e:
-            self.logger.error(f"❌ Performance summary error: {e}")
-            return {"error": str(e)}
+            return {"error": str(e), "system_status": "🔧 Optimizing"}
+
+    def _get_user_message(self, performance: Dict) -> str:
+        """User-friendly message"""
+        total_profit = performance.get("total_profit", 0.0)
+
+        if total_profit > 100:
+            return "🎉 Excellent! Your passive income is working beautifully!"
+        elif total_profit > 25:
+            return "📈 Great progress! Steady daily growth continues."
+        elif total_profit > 0:
+            return "✅ System optimizing and building momentum."
+        else:
+            return "🧠 Smart grid learning market patterns. Patience pays!"
+
+    def _calculate_daily_progress(self, performance: Dict) -> str:
+        """Calculate progress toward daily targets"""
+        total_profit = performance.get("total_profit", 0.0)
+        total_trades = performance.get("total_trades", 0)
+
+        if total_trades > 0:
+            # Rough daily estimate
+            daily_estimate = total_profit / max(
+                1, total_trades / 5
+            )  # Assume 5 trades per day
+            target = 11.0  # $11/day total target
+            progress = min(100, (daily_estimate / target) * 100)
+            return f"{progress:.0f}% of daily target"
+
+        return "Building momentum"
 
     # Add this method to CompoundInterestManager class
     def _safe_get_performance_metrics(self, client_id: int) -> Dict:
