@@ -1,4 +1,11 @@
 # services/grid_orchestrator.py
+"""
+Grid Orchestrator - Production Version
+=====================================
+
+Clean production version with all debug code removed.
+Orchestrates multiple advanced grid managers across clients.
+"""
 
 import asyncio
 import logging
@@ -15,7 +22,7 @@ from utils.crypto import CryptoUtils
 
 
 class GridOrchestrator:
-    """Singleton GridOrchestrator for managing all grid trading operations"""
+    """Production singleton GridOrchestrator for managing all grid trading operations"""
 
     _instance = None
     _initialized = False
@@ -71,10 +78,6 @@ class GridOrchestrator:
         )
         GridOrchestrator._initialized = True
 
-    def _log_access(self, method_name: str):
-        """Log method access for debugging"""
-        self.logger.debug(f"🔍 GridOrchestrator {self.creation_id} - {method_name}")
-
     def ensure_initialized(self):
         """Ensure proper initialization"""
         if not hasattr(self, "advanced_managers"):
@@ -129,11 +132,11 @@ class GridOrchestrator:
             if not binance_client:
                 return False
 
-            # 🔧 FIXED: Pass shared FIFO service to GridManager
+            # Create GridManager with shared FIFO service
             manager = GridManager(
                 binance_client=binance_client,
                 client_id=client_id,
-                fifo_service=self.fifo_service,  # ✅ Share the single instance
+                fifo_service=self.fifo_service,
             )
 
             # Store manager
@@ -160,7 +163,6 @@ class GridOrchestrator:
             if not await self.create_advanced_manager(client_id):
                 return {"success": False, "error": "Failed to create advanced manager"}
 
-            # 🔍 DEBUG 2: Before executing force command
             manager = self.advanced_managers[client_id]
 
             # Execute command
@@ -262,7 +264,6 @@ class GridOrchestrator:
 
     def get_all_active_grids(self) -> Dict:
         """Get status of all active grids across all clients"""
-        self._log_access("get_all_active_grids")
         self.ensure_initialized()
 
         try:
@@ -318,11 +319,8 @@ class GridOrchestrator:
                 "error": str(e),
             }
 
-    # Enhanced update_all_grids method with debugging
     async def update_all_grids(self) -> Dict:
         """Update all active grids across all clients"""
-        self._log_access("update_all_grids")
-
         try:
             if not self.advanced_managers:
                 return {
@@ -343,10 +341,6 @@ class GridOrchestrator:
                     updated_grids += 1
                 except Exception as e:
                     self.logger.error(f"❌ Update error for client {client_id}: {e}")
-                    # 🔍 DEBUG: After error
-                    self.logger.error(
-                        f"🔍 DEBUG: After error for client {client_id}..."
-                    )
 
             return {
                 "success": True,
@@ -361,7 +355,6 @@ class GridOrchestrator:
 
     async def get_client_grid_status(self, client_id: int) -> Dict:
         """Get grid status for specific client"""
-        self._log_access("get_client_grid_status")
         self.ensure_initialized()
 
         try:
@@ -415,12 +408,11 @@ class GridOrchestrator:
         self.logger.info("🛑 Monitoring system stopped")
 
     async def _monitor_all_grids(self):
-        """Monitor all active grids with corruption detection"""
+        """Monitor all active grids"""
         try:
             for client_id, manager in self.advanced_managers.items():
                 try:
                     await manager.monitor_and_update_grids()
-
                 except Exception as e:
                     self.logger.error(
                         f"❌ Monitoring error for client {client_id}: {e}"

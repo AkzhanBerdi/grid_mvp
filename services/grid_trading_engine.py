@@ -1,4 +1,11 @@
 # services/grid_trading_engine.py
+"""
+Grid Trading Engine - Production Version
+========================================
+
+Clean production version with all debug code and emergency fixes removed.
+Handles advanced grid trading with proper order management.
+"""
 
 import logging
 from typing import Dict, Optional
@@ -11,7 +18,7 @@ from services.grid_utils import GridUtilityService
 
 
 class GridTradingEngine:
-    """Clean grid trading engine with proper inventory integration"""
+    """Production grid trading engine with proper inventory integration"""
 
     def __init__(self, binance_client: Client, client_id: int):
         self.binance_client = binance_client
@@ -40,7 +47,7 @@ class GridTradingEngine:
     ) -> Dict:
         """Execute initial 50/50 split for Pure USDT allocation"""
         try:
-            self.logger.info(f"💰 Executing enhanced 50/50 split for {symbol}")
+            self.logger.info(f"💰 Executing 50/50 split for {symbol}")
 
             # Get exchange rules
             exchange_rules = await self.utility.get_exchange_rules_simple(symbol)
@@ -59,7 +66,7 @@ class GridTradingEngine:
             asset_quantity = round(asset_quantity, precision)
 
             self.logger.info(
-                f"🛒 Enhanced purchase: {asset_quantity} {symbol.replace('USDT', '')} @ ${current_price:.2f}"
+                f"🛒 Purchase: {asset_quantity} {symbol.replace('USDT', '')} @ ${current_price:.2f}"
             )
 
             try:
@@ -78,7 +85,7 @@ class GridTradingEngine:
                 if not filled_value:  # Fallback calculation
                     filled_value = filled_qty * current_price
 
-                self.logger.info("✅ Enhanced purchase completed:")
+                self.logger.info("✅ Purchase completed:")
                 self.logger.info(
                     f"   🪙 Asset acquired: {filled_qty:.4f} {symbol.replace('USDT', '')}"
                 )
@@ -109,29 +116,26 @@ class GridTradingEngine:
     async def create_advanced_grid_levels(
         self, grid_config, current_price: float, optimal_config: Dict
     ) -> Dict:
-        """Create grid levels with guaranteed minimum notional compliance"""
+        """Create grid levels with proper notional compliance"""
         try:
             spacing = grid_config.grid_spacing
             base_order_size = optimal_config["base_order_size"]
 
-            # Ensure ALL levels meet minimum notional
-            min_notional = 10.0  # Binance minimum
-            safety_margin = 1.2  # 20% safety margin
-            minimum_order_size = min_notional * safety_margin  # $12 minimum
+            # Ensure minimum notional compliance
+            min_notional = 10.0
+            safety_margin = 1.2
+            minimum_order_size = min_notional * safety_margin
 
-            # Adjust base order size if needed
             if base_order_size < minimum_order_size:
                 base_order_size = minimum_order_size
                 self.logger.info(
-                    f"📈 Base order size adjusted to ${base_order_size:.2f} for notional compliance"
+                    f"📈 Order size adjusted to ${base_order_size:.2f} for notional compliance"
                 )
 
-            self.logger.info(
-                f"🎯 Creating advanced grid levels for {grid_config.symbol}"
-            )
+            self.logger.info(f"🎯 Creating grid levels for {grid_config.symbol}")
             self.logger.info(f"   📊 Spacing: {spacing * 100:.2f}%")
-            self.logger.info(f"   💰 Guaranteed order size: ${base_order_size:.2f}")
-            self.logger.info(f"   💲 Current price: ${current_price:.6f}")
+            self.logger.info(f"   💰 Order size: ${base_order_size:.2f}")
+            self.logger.info(f"   💲 Center price: ${current_price:.6f}")
 
             # Get exchange rules
             exchange_rules = await self.utility.get_exchange_rules_simple(
@@ -193,7 +197,7 @@ class GridTradingEngine:
             grid_config.buy_levels = buy_levels
             grid_config.sell_levels = sell_levels
 
-            # Verify ALL levels meet minimum notional
+            # Verify notional compliance
             failed_levels = []
             for level in buy_levels + sell_levels:
                 notional_value = level["quantity"] * level["price"]
@@ -207,55 +211,29 @@ class GridTradingEngine:
                     )
 
             if failed_levels:
-                self.logger.error(
-                    f"❌ {len(failed_levels)} levels still below minimum notional:"
-                )
-                for failed in failed_levels:
-                    self.logger.error(
-                        f"   Level {failed['level']}: ${failed['notional']:.2f} < ${failed['required']:.2f}"
-                    )
-
-                # Emergency fix: Increase base order size more aggressively
-                emergency_base_size = min_notional * 1.5  # 50% safety margin
+                # Adjust order size to ensure compliance
+                adjusted_base_size = min_notional * 1.5
                 self.logger.info(
-                    f"🚨 Emergency adjustment: Using ${emergency_base_size:.2f} per order"
+                    f"🔧 Adjusting order size to ${adjusted_base_size:.2f} for full compliance"
                 )
 
-                # Recalculate all levels with emergency size
+                # Recalculate all levels
                 for level in buy_levels + sell_levels:
-                    level["order_size_usd"] = emergency_base_size
-                    level["quantity"] = emergency_base_size / level["price"]
+                    level["order_size_usd"] = adjusted_base_size
+                    level["quantity"] = adjusted_base_size / level["price"]
 
-            self.logger.info(
-                "✅ Grid levels created with GUARANTEED notional compliance:"
-            )
+            self.logger.info("✅ Grid levels created:")
             self.logger.info(f"   📈 SELL levels: {len(sell_levels)}")
             self.logger.info(f"   📉 BUY levels: {len(buy_levels)}")
-            self.logger.info(f"   💰 Order size per level: ${base_order_size:.2f}")
-
-            # Log sample levels to verify
-            for level in sell_levels[:2]:
-                notional = level["quantity"] * level["price"]
-                self.logger.info(
-                    f"      SELL Level {level['level']}: ${notional:.2f} notional ✅"
-                )
-
-            for level in buy_levels[:2]:
-                notional = level["quantity"] * level["price"]
-                self.logger.info(
-                    f"      BUY Level {level['level']}: ${notional:.2f} notional ✅"
-                )
 
         except Exception as e:
             self.logger.error(f"❌ Grid level creation error: {e}")
             raise
 
     async def execute_enhanced_grid_setup(self, symbol: str, grid_config) -> Dict:
-        """Execute enhanced grid setup with proper error handling"""
+        """Execute grid setup with proper error handling"""
         try:
-            self.logger.info(
-                f"🎯 Executing enhanced grid setup with error recovery for {symbol}"
-            )
+            self.logger.info(f"🎯 Executing grid setup for {symbol}")
 
             # Get account balances
             account = self.binance_client.get_account()
@@ -269,7 +247,7 @@ class GridTradingEngine:
                     asset_balance = float(balance["free"])
 
             self.logger.info(
-                f"📊 Actual balances: USDT=${usdt_balance:.2f}, {symbol.replace('USDT', '')}={asset_balance:.4f}"
+                f"📊 Account balances: USDT=${usdt_balance:.2f}, {symbol.replace('USDT', '')}={asset_balance:.4f}"
             )
 
             orders_placed = 0
@@ -281,157 +259,50 @@ class GridTradingEngine:
             # Place buy orders
             for level in grid_config.buy_levels:
                 try:
-                    raw_quantity = level["quantity"]
-
-                    self.logger.debug(
-                        f"🎯 BUY Level {level['level']}: Using grid quantity {raw_quantity:.6f} (${level['order_size_usd']:.2f})"
+                    success = await self._place_single_order(
+                        symbol, level, exchange_rules
                     )
-
-                    if raw_quantity <= 0:
-                        self.logger.warning(
-                            f"⚠️ BUY Level {level['level']}: Invalid quantity {raw_quantity}"
-                        )
+                    if success:
+                        orders_placed += 1
+                    else:
                         failed_orders += 1
-                        continue
-
-                    # Validate and format order parameters
-                    validation_result = self.utility.validate_order_params(
-                        symbol=symbol,
-                        quantity=raw_quantity,
-                        price=level["price"],
-                        rules=exchange_rules,
-                    )
-
-                    if not validation_result.get("valid", False):
-                        self.logger.warning(
-                            f"⚠️ BUY Level {level['level']}: Order validation failed: {validation_result.get('error', 'Unknown error')}"
-                        )
-                        failed_orders += 1
-                        continue
-
-                    # Use validated parameters
-                    quantity_string = validation_result["quantity_string"]
-                    price_string = validation_result["price_string"]
-
-                    # Verify notional value
-                    if validation_result["notional_value"] < exchange_rules.get(
-                        "min_notional", 10.0
-                    ):
-                        self.logger.warning(
-                            f"⚠️ BUY Level {level['level']}: Order value ${validation_result['notional_value']:.2f} below minimum"
-                        )
-                        failed_orders += 1
-                        continue
-
-                    # Place order
-                    order = self.binance_client.order_limit_buy(
-                        symbol=symbol,
-                        quantity=quantity_string,
-                        price=price_string,
-                    )
-
-                    level["order_id"] = order["orderId"]
-                    orders_placed += 1
-
-                    self.logger.info(
-                        f"✅ BUY Level {level['level']}: {quantity_string} @ ${price_string}"
-                    )
-
                 except Exception as e:
                     self.logger.error(f"❌ BUY Level {level['level']} failed: {e}")
                     failed_orders += 1
 
             # Place sell orders
             self.logger.info(
-                f"💡 Attempting SELL orders with {asset_balance:.4f} {symbol.replace('USDT', '')} available"
+                f"💡 Placing SELL orders with {asset_balance:.4f} {symbol.replace('USDT', '')} available"
             )
 
             for level in grid_config.sell_levels:
                 try:
-                    intended_quantity = level["quantity"]
-
-                    self.logger.debug(
-                        f"🎯 SELL Level {level['level']}: Intended quantity {intended_quantity:.6f} (${level['order_size_usd']:.2f})"
-                    )
-
-                    # Check if we have enough assets for this specific order
-                    if intended_quantity > asset_balance:
-                        self.logger.warning(
-                            f"⚠️ SELL Level {level['level']}: Need {intended_quantity:.6f} but only have {asset_balance:.6f}"
-                        )
-
-                        # Try to use what we have if it's still meaningful
+                    # Check if we have enough assets
+                    if level["quantity"] > asset_balance:
+                        # Use available balance if it meets minimum notional
                         available_quantity = asset_balance * 0.8
-
-                        # Check if this smaller quantity still meets minimum notional
                         test_notional = available_quantity * level["price"]
+
                         if test_notional >= exchange_rules.get("min_notional", 10.0):
-                            raw_quantity = available_quantity
+                            level["quantity"] = available_quantity
                             self.logger.info(
-                                f"📉 SELL Level {level['level']}: Adjusted to available {raw_quantity:.6f}"
+                                f"📉 SELL Level {level['level']}: Adjusted to available {available_quantity:.6f}"
                             )
                         else:
                             self.logger.warning(
-                                f"⚠️ SELL Level {level['level']}: Available quantity too small for min notional"
+                                f"⚠️ SELL Level {level['level']}: Insufficient assets for minimum notional"
                             )
                             failed_orders += 1
                             continue
+
+                    success = await self._place_single_order(
+                        symbol, level, exchange_rules
+                    )
+                    if success:
+                        orders_placed += 1
+                        asset_balance -= level["quantity"]
                     else:
-                        raw_quantity = intended_quantity
-
-                    if raw_quantity <= 0:
-                        self.logger.warning(
-                            f"⚠️ SELL Level {level['level']}: Invalid quantity {raw_quantity}"
-                        )
                         failed_orders += 1
-                        continue
-
-                    # Validate and format order parameters
-                    validation_result = self.utility.validate_order_params(
-                        symbol=symbol,
-                        quantity=raw_quantity,
-                        price=level["price"],
-                        rules=exchange_rules,
-                    )
-
-                    if not validation_result.get("valid", False):
-                        self.logger.warning(
-                            f"⚠️ SELL Level {level['level']}: Order validation failed: {validation_result.get('error', 'Unknown error')}"
-                        )
-                        failed_orders += 1
-                        continue
-
-                    # Use validated parameters
-                    order_quantity = validation_result["valid_quantity"]
-                    quantity_string = validation_result["quantity_string"]
-                    price_string = validation_result["price_string"]
-
-                    # Verify notional value
-                    if validation_result["notional_value"] < exchange_rules.get(
-                        "min_notional", 10.0
-                    ):
-                        self.logger.warning(
-                            f"⚠️ SELL Level {level['level']}: Order value ${validation_result['notional_value']:.2f} below minimum"
-                        )
-                        failed_orders += 1
-                        continue
-
-                    # Place order
-                    order = self.binance_client.order_limit_sell(
-                        symbol=symbol,
-                        quantity=quantity_string,
-                        price=price_string,
-                    )
-
-                    level["order_id"] = order["orderId"]
-                    orders_placed += 1
-
-                    self.logger.info(
-                        f"✅ SELL Level {level['level']}: {quantity_string} @ ${price_string} (${validation_result['notional_value']:.2f})"
-                    )
-
-                    # Reduce available balance
-                    asset_balance -= order_quantity
 
                 except Exception as e:
                     self.logger.error(f"❌ SELL Level {level['level']} failed: {e}")
@@ -443,9 +314,8 @@ class GridTradingEngine:
                 (orders_placed / total_attempted * 100) if total_attempted > 0 else 0
             )
 
-            self.logger.info("✅ Enhanced grid setup completed:")
+            self.logger.info("✅ Grid setup completed:")
             self.logger.info(f"   🎯 Orders placed: {orders_placed}")
-            self.logger.info("   🔄 Orders recovered: 0")
             self.logger.info(f"   ❌ Failed orders: {failed_orders}")
             self.logger.info(f"   📊 Success rate: {success_rate:.1f}%")
 
@@ -460,6 +330,62 @@ class GridTradingEngine:
         except Exception as e:
             self.logger.error(f"❌ Grid setup error: {e}")
             return {"success": False, "error": str(e)}
+
+    async def _place_single_order(
+        self, symbol: str, level: Dict, exchange_rules: Dict
+    ) -> bool:
+        """Place a single grid order"""
+        try:
+            # Validate order parameters
+            validation_result = self.utility.validate_order_params(
+                symbol=symbol,
+                quantity=level["quantity"],
+                price=level["price"],
+                rules=exchange_rules,
+            )
+
+            if not validation_result.get("valid", False):
+                self.logger.warning(
+                    f"⚠️ {level['side']} Level {level['level']}: Validation failed"
+                )
+                return False
+
+            # Check minimum notional
+            if validation_result["notional_value"] < exchange_rules.get(
+                "min_notional", 10.0
+            ):
+                self.logger.warning(
+                    f"⚠️ {level['side']} Level {level['level']}: Below minimum notional"
+                )
+                return False
+
+            # Use validated parameters
+            quantity_string = validation_result["quantity_string"]
+            price_string = validation_result["price_string"]
+
+            # Place order
+            if level["side"] == "BUY":
+                order = self.binance_client.order_limit_buy(
+                    symbol=symbol,
+                    quantity=quantity_string,
+                    price=price_string,
+                )
+            else:
+                order = self.binance_client.order_limit_sell(
+                    symbol=symbol,
+                    quantity=quantity_string,
+                    price=price_string,
+                )
+
+            level["order_id"] = order["orderId"]
+            self.logger.info(
+                f"✅ {level['side']} Level {level['level']}: {quantity_string} @ ${price_string}"
+            )
+            return True
+
+        except Exception as e:
+            self.logger.error(f"❌ Order placement failed: {e}")
+            return False
 
     async def check_and_replace_filled_orders(self, symbol: str, grid_config):
         """Check for filled orders and create replacements"""
@@ -495,7 +421,7 @@ class GridTradingEngine:
     async def _handle_filled_order(
         self, symbol: str, level: dict, order: dict, grid_config
     ):
-        """Handle filled order"""
+        """Handle filled order and create replacement"""
         try:
             side = order["side"]
             quantity = float(order["executedQty"])
@@ -540,9 +466,9 @@ class GridTradingEngine:
     async def _create_replacement_order(
         self, symbol: str, level: dict, original_side: str, grid_config
     ):
-        """Create replacement order with complete validation"""
+        """Create replacement order with proper validation"""
         try:
-            # Validate grid config before proceeding
+            # Validate grid config
             if not validate_grid_config(grid_config, f"replacement_{symbol}"):
                 self.logger.error(
                     f"❌ Invalid grid_config - aborting replacement order for {symbol}"
