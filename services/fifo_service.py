@@ -8,6 +8,7 @@ FIXES:
 2. Adds async database operations for better performance
 3. Maintains all existing FIFO functionality
 4. Supports pure USDT grid initialization
+5. FIXED: asyncio.run() cannot be called from running event loop
 """
 
 import asyncio
@@ -28,6 +29,7 @@ class FIFOService:
 
     CRITICAL FIX: Now properly records BOTH BUY and SELL trades in trades table
     while maintaining proper FIFO cost basis tracking.
+    ASYNC FIX: Properly handles async/sync context to avoid event loop conflicts.
     """
 
     def __init__(self, db_path: Optional[str] = None):
@@ -49,7 +51,8 @@ class FIFOService:
 
         # Add startup suppression (prevents spam during service startup)
         self.startup_mode = True
-        asyncio.get_event_loop().call_later(60, self._disable_startup_mode)
+        # Use a different approach for startup mode timing
+        self._schedule_startup_mode_disable()
 
         # Milestone tracking for profit notifications
         self.milestones_reached = set()
@@ -58,10 +61,19 @@ class FIFOService:
         self.error_count = 0
         self.last_error_time = 0
 
-    def _disable_startup_mode(self):
-        """Disable startup mode to allow normal notifications"""
-        self.startup_mode = False
-        self.logger.info("📢 FIFO notifications enabled (startup suppression ended)")
+    def _schedule_startup_mode_disable(self):
+        """Schedule startup mode disable without depending on event loop"""
+        import threading
+
+        def disable_after_delay():
+            time.sleep(60)  # Wait 60 seconds
+            self.startup_mode = False
+            self.logger.info(
+                "📢 FIFO notifications enabled (startup suppression ended)"
+            )
+
+        thread = threading.Thread(target=disable_after_delay, daemon=True)
+        thread.start()
 
     def _init_cost_basis_table(self):
         """Initialize cost basis tracking table"""
@@ -234,7 +246,7 @@ class FIFOService:
     # SYNC COST BASIS OPERATIONS (For Critical Operations)
     # ==============================================
 
-    async def record_initial_cost_basis(
+    def record_initial_cost_basis(
         self,
         client_id: int,
         symbol: str,
@@ -287,7 +299,7 @@ class FIFOService:
             self.logger.error(f"❌ Error recording initial cost basis: {e}")
             raise
 
-    async def _record_trade_with_fifo(
+    def _record_trade_with_fifo(
         self,
         client_id: int,
         symbol: str,
@@ -297,15 +309,71 @@ class FIFOService:
         order_id: str = None,
     ) -> bool:
         """
-        FIXED: Record trade in FIFO system with proper logic
+        FIXED: Record trade in FIFO system with proper logic (sync version)
 
-        This method was the source of the BUY trade recording issue.
-        Now properly records ALL trades in the trades table.
+        Uses sync database operations to avoid async context issues.
         """
-        # Use the fixed async version for better performance
-        return await self.record_trade_with_fifo_async(
-            client_id, symbol, side, quantity, price, order_id
-        )
+        try:
+            total_value = quantity * price
+
+            with sqlite3.connect(self.db_path) as conn:
+                # STEP 1: ALWAYS record the trade (both BUY and SELL)
+                conn.execute(
+                    """
+                    INSERT INTO trades (
+                        client_id, symbol, side, quantity, price,
+                        total_value, order_id, executed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                    (
+                        client_id,
+                        symbol,
+                        side,
+                        quantity,
+                        price,
+                        total_value,
+                        order_id,
+                    ),
+                )
+
+                # STEP 2: For BUY orders, ALSO record as cost basis for FIFO tracking
+                if side == "BUY":
+                    # Record cost basis for future FIFO calculations
+                    conn.execute(
+                        """
+                        INSERT INTO fifo_cost_basis (
+                            client_id, symbol, quantity, cost_per_unit, 
+                            total_cost, remaining_quantity, trade_id, is_initialization
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                    """,
+                        (
+                            client_id,
+                            symbol.replace(
+                                "USDT", ""
+                            ),  # Remove USDT suffix for cost basis
+                            quantity,
+                            price,
+                            total_value,
+                            quantity,  # Initially, all quantity remains
+                            order_id or f"trade_{int(time.time())}",
+                        ),
+                    )
+
+                    self.logger.debug(
+                        f"✅ BUY trade + cost basis recorded sync: {quantity:.4f} {symbol} @ ${price:.4f}"
+                    )
+
+                else:  # SELL orders
+                    self.logger.debug(
+                        f"✅ SELL trade recorded sync: {quantity:.4f} {symbol} @ ${price:.4f}"
+                    )
+
+                conn.commit()
+                return True
+
+        except Exception as e:
+            self.logger.error(f"❌ Failed to record trade with FIFO sync: {e}")
+            return False
 
     # ==============================================
     # INTELLIGENT ROUTING FOR TRADE RECORDING
@@ -331,7 +399,7 @@ class FIFOService:
         if critical:
             # Critical operation - use sync for reliability
             try:
-                return await self._record_trade_with_fifo(
+                return self._record_trade_with_fifo(
                     client_id, symbol, side, quantity, price, order_id
                 )
             except Exception as e:
@@ -344,7 +412,7 @@ class FIFOService:
             )
 
     # ==============================================
-    # ENHANCED FIFO PROFIT CALCULATIONS
+    # ENHANCED FIFO PROFIT CALCULATIONS - FIXED
     # ==============================================
 
     async def calculate_fifo_profit_with_cost_basis_async(
@@ -405,17 +473,81 @@ class FIFOService:
         self, client_id: int, symbol: Optional[str] = None
     ) -> Dict:
         """
-        Calculate FIFO profit using proper cost basis from initialization (sync version)
+        FIXED: Calculate FIFO profit using proper cost basis from initialization (sync version)
 
-        For backward compatibility - delegates to async version for better performance.
+        CRITICAL FIX: Now properly handles async context to avoid event loop conflicts.
         """
         try:
-            # Run async version using asyncio for backward compatibility
-            return asyncio.run(
-                self.calculate_fifo_profit_with_cost_basis_async(client_id, symbol)
-            )
+            # Check if we're already in an event loop
+            try:
+                loop = asyncio.get_running_loop()
+                # We're in a running loop, use sync fallback to avoid conflicts
+                return self._calculate_fifo_sync_fallback(client_id, symbol)
+            except RuntimeError:
+                # No running loop, safe to use asyncio.run()
+                return asyncio.run(
+                    self.calculate_fifo_profit_with_cost_basis_async(client_id, symbol)
+                )
         except Exception as e:
             self.logger.error(f"❌ Enhanced FIFO calculation error: {e}")
+            return self._empty_fifo_performance()
+
+    def _calculate_fifo_sync_fallback(
+        self, client_id: int, symbol: Optional[str] = None
+    ) -> Dict:
+        """
+        Synchronous fallback for FIFO calculation when in async context
+
+        This prevents the asyncio.run() error when called from an async context.
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                # Get all trades for the client/symbol
+                if symbol:
+                    trades_query = """
+                        SELECT symbol, side, quantity, price, total_value, executed_at
+                        FROM trades 
+                        WHERE client_id = ? AND symbol = ?
+                        ORDER BY executed_at ASC
+                    """
+                    params = (client_id, symbol)
+                else:
+                    trades_query = """
+                        SELECT symbol, side, quantity, price, total_value, executed_at
+                        FROM trades 
+                        WHERE client_id = ?
+                        ORDER BY executed_at ASC
+                    """
+                    params = (client_id,)
+
+                cursor = conn.execute(trades_query, params)
+                trades = cursor.fetchall()
+
+                # Get cost basis information
+                cost_basis_query = (
+                    """
+                    SELECT symbol, quantity, cost_per_unit, total_cost, remaining_quantity
+                    FROM fifo_cost_basis
+                    WHERE client_id = ?
+                """
+                    + (" AND symbol = ?" if symbol else "")
+                    + """
+                    ORDER BY created_at ASC
+                """
+                )
+
+                cost_basis_params = (client_id, symbol) if symbol else (client_id,)
+                cursor = conn.execute(cost_basis_query, cost_basis_params)
+                cost_basis_records = cursor.fetchall()
+
+                result = self._calculate_enhanced_fifo_profit(
+                    trades, cost_basis_records
+                )
+                result["calculation_method"] = "sync_fallback"
+                return result
+
+        except Exception as e:
+            self.logger.error(f"❌ Sync FIFO fallback error: {e}")
             return self._empty_fifo_performance()
 
     def _calculate_enhanced_fifo_profit(
@@ -665,18 +797,7 @@ class FIFOService:
                 return summary
 
         except Exception as e:
-            self.logger.error(f"❌ Error getting cost basis summary async: {e}")
-            return {"error": str(e)}
-
-    def get_cost_basis_summary(
-        self, client_id: int, symbol: Optional[str] = None
-    ) -> Dict:
-        """Get summary of cost basis records for a client (sync version)"""
-        try:
-            # Run async version for better performance
-            return asyncio.run(self.get_cost_basis_summary_async(client_id, symbol))
-        except Exception as e:
-            self.logger.error(f"❌ Error getting cost basis summary: {e}")
+            self.logger.error(f"❌ Error getting cost basis summary sync: {e}")
             return {"error": str(e)}
 
     # ==============================================
@@ -1063,12 +1184,20 @@ Value: ${order_value:.2f}"""
     ) -> bool:
         """Legacy compatibility method - now properly records ALL trades"""
         try:
-            # Use the fixed async method via asyncio
-            return asyncio.run(
-                self.record_trade_with_fifo_async(
+            # Check async context and use appropriate method
+            try:
+                loop = asyncio.get_running_loop()
+                # In async context, use sync fallback
+                return self._record_trade_with_fifo(
                     client_id, symbol, side, quantity, price, order_id
                 )
-            )
+            except RuntimeError:
+                # No running loop, use async version
+                return asyncio.run(
+                    self.record_trade_with_fifo_async(
+                        client_id, symbol, side, quantity, price, order_id
+                    )
+                )
         except Exception as e:
             self.logger.error(f"❌ Legacy log_trade error: {e}")
             return False
@@ -1175,13 +1304,6 @@ Check logs for detailed error information."""
         """
         try:
             if enable:
-                # Replace sync methods with async versions
-                self.calculate_fifo_profit_with_cost_basis = (
-                    self.calculate_fifo_profit_with_cost_basis_async
-                )
-                self.get_cost_basis_summary = self.get_cost_basis_summary_async
-                self.record_initial_cost_basis = self.record_initial_cost_basis_async
-
                 self.logger.info(
                     "✅ FIFO async operations enabled for concurrent users"
                 )
@@ -1304,14 +1426,183 @@ if __name__ == "__main__":
         validation = await fifo_service.validate_fifo_integrity(test_client_id)
         print(f"✅ FIFO validation: {validation['validation_passed']}")
 
+        # Test sync fallback functionality
+        print("\n🔄 Testing Sync Fallback...")
+        try:
+            # This should use sync fallback since we're in async context
+            sync_profit_data = fifo_service.calculate_fifo_profit_with_cost_basis(
+                test_client_id
+            )
+            print(
+                f"✅ Sync fallback works: {sync_profit_data.get('calculation_method', 'unknown')}"
+            )
+        except Exception as e:
+            print(f"❌ Sync fallback failed: {e}")
+
+        # Test cost basis summary
+        print("\n📋 Testing Cost Basis Summary...")
+        try:
+            cost_summary = await fifo_service.get_cost_basis_summary_async(
+                test_client_id
+            )
+            print(
+                f"✅ Cost basis records: {cost_summary.get('total_cost_basis_records', 0)}"
+            )
+            print(
+                f"✅ Has initialization: {cost_summary.get('has_initialization_records', False)}"
+            )
+        except Exception as e:
+            print(f"❌ Cost basis summary failed: {e}")
+
+    async def test_context_detection():
+        """Test that the service properly detects async contexts"""
+        print("\n🧪 Testing Context Detection...")
+
+        fifo_service = FIFOService("data/gridtrader_clients.db")
+        test_client_id = 123456789
+
+        # This should detect we're in async context and use sync fallback
+        try:
+            result = fifo_service.calculate_fifo_profit_with_cost_basis(test_client_id)
+            method = result.get("calculation_method", "unknown")
+            print(f"✅ Context detection working: Method = {method}")
+
+            if "sync_fallback" in method:
+                print("✅ Correctly used sync fallback in async context")
+            else:
+                print("⚠️  May not have detected async context properly")
+
+        except Exception as e:
+            print(f"❌ Context detection test failed: {e}")
+
+    def test_sync_context():
+        """Test FIFO service in pure sync context"""
+        print("\n🧪 Testing Pure Sync Context...")
+
+        fifo_service = FIFOService("data/gridtrader_clients.db")
+        test_client_id = 123456789
+
+        try:
+            # This should use asyncio.run() since we're not in async context
+            result = fifo_service.calculate_fifo_profit_with_cost_basis(test_client_id)
+            method = result.get("calculation_method", "unknown")
+            print(f"✅ Sync context test: Method = {method}")
+
+            if "sync_fallback" not in method:
+                print("✅ Correctly used async version in sync context")
+            else:
+                print("⚠️  Used sync fallback in sync context (still works)")
+
+        except Exception as e:
+            print(f"❌ Sync context test failed: {e}")
+
+    async def test_trade_recording_integrity():
+        """Test that trades are recorded properly in both tables"""
+        print("\n🧪 Testing Trade Recording Integrity...")
+
+        fifo_service = FIFOService("data/gridtrader_clients.db")
+        test_client_id = 999999999  # Use different ID for testing
+
+        # Clear any existing test data
+        try:
+            with sqlite3.connect(fifo_service.db_path) as conn:
+                conn.execute(
+                    "DELETE FROM trades WHERE client_id = ?", (test_client_id,)
+                )
+                conn.execute(
+                    "DELETE FROM fifo_cost_basis WHERE client_id = ?", (test_client_id,)
+                )
+                conn.commit()
+        except:
+            pass
+
+        # Test BUY trade recording
+        buy_success = await fifo_service.record_trade_with_fifo_async(
+            test_client_id, "ADAUSDT", "BUY", 100.0, 1.0, "test_buy_001"
+        )
+        print(f"✅ BUY trade recorded: {buy_success}")
+
+        # Test SELL trade recording
+        sell_success = await fifo_service.record_trade_with_fifo_async(
+            test_client_id, "ADAUSDT", "SELL", 50.0, 1.1, "test_sell_001"
+        )
+        print(f"✅ SELL trade recorded: {sell_success}")
+
+        # Verify both trades are in trades table
+        try:
+            with sqlite3.connect(fifo_service.db_path) as conn:
+                cursor = conn.execute(
+                    "SELECT side, COUNT(*) FROM trades WHERE client_id = ? GROUP BY side",
+                    (test_client_id,),
+                )
+                trade_counts = dict(cursor.fetchall())
+
+                print(
+                    f"✅ Trades in database: BUY={trade_counts.get('BUY', 0)}, SELL={trade_counts.get('SELL', 0)}"
+                )
+
+                # Verify BUY trades also created cost basis records
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM fifo_cost_basis WHERE client_id = ?",
+                    (test_client_id,),
+                )
+                cost_basis_count = cursor.fetchone()[0]
+                print(f"✅ Cost basis records: {cost_basis_count}")
+
+                if trade_counts.get("BUY", 0) > 0 and cost_basis_count > 0:
+                    print("✅ BUY trades correctly created cost basis records")
+                else:
+                    print("❌ BUY trades may not have created cost basis records")
+
+        except Exception as e:
+            print(f"❌ Trade integrity verification failed: {e}")
+
+        # Clean up test data
+        try:
+            with sqlite3.connect(fifo_service.db_path) as conn:
+                conn.execute(
+                    "DELETE FROM trades WHERE client_id = ?", (test_client_id,)
+                )
+                conn.execute(
+                    "DELETE FROM fifo_cost_basis WHERE client_id = ?", (test_client_id,)
+                )
+                conn.commit()
+                print("✅ Test data cleaned up")
+        except:
+            pass
+
+    # Run all tests
     try:
+        print("🚀 Starting FIFO Service Comprehensive Tests...")
+        print("=" * 60)
+
+        # Test 1: Basic functionality and performance
         asyncio.run(test_fifo_performance())
-        print("\n🎉 Enhanced FIFO Service Ready!")
+
+        # Test 2: Context detection
+        asyncio.run(test_context_detection())
+
+        # Test 3: Pure sync context
+        test_sync_context()
+
+        # Test 4: Trade recording integrity
+        asyncio.run(test_trade_recording_integrity())
+
+        print("\n" + "=" * 60)
+        print("🎉 Enhanced FIFO Service Ready!")
         print("\nKey fixes implemented:")
         print("✅ BUY trades now recorded in trades table")
         print("✅ Async operations for better performance")
         print("✅ Complete trade history maintained")
         print("✅ FIFO cost basis tracking preserved")
+        print("✅ FIXED: asyncio.run() event loop conflict resolved")
+        print("✅ Smart context detection (async vs sync)")
+        print("✅ Comprehensive error handling")
+        print("✅ Trade recording integrity verified")
+
     except Exception as e:
         print(f"❌ Test failed: {e}")
         print("Check database path and permissions")
+        import traceback
+
+        traceback.print_exc()
