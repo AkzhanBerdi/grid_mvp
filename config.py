@@ -109,6 +109,63 @@ class Config:
     MIN_RESET_THRESHOLD = 0.1  # 10% minimum
     MAX_RESET_THRESHOLD = 0.25  # 25% maximum
 
+    # ✅ USER REGISTRY SETTINGS
+    AUTO_APPROVE_USERS = os.getenv("AUTO_APPROVE_USERS", "false").lower() == "true"
+    REQUIRE_ADMIN_APPROVAL = not AUTO_APPROVE_USERS  # Inverse of auto_approve
+    MAX_PENDING_USERS = int(os.getenv("MAX_PENDING_USERS", "50"))
+    USER_REGISTRATION_ENABLED = (
+        os.getenv("USER_REGISTRATION_ENABLED", "true").lower() == "true"
+    )
+    ADMIN_NOTIFICATION_ON_REGISTRATION = (
+        os.getenv("ADMIN_NOTIFICATION_ON_REGISTRATION", "true").lower() == "true"
+    )
+
+    # Registration messages
+    REGISTRATION_WELCOME_MESSAGE = os.getenv(
+        "REGISTRATION_WELCOME_MESSAGE",
+        "Welcome to GridTrader Pro! Your registration is pending approval. You will be notified once approved.",
+    )
+    REGISTRATION_APPROVED_MESSAGE = os.getenv(
+        "REGISTRATION_APPROVED_MESSAGE",
+        "🎉 Congratulations! Your GridTrader Pro account has been approved. You can now start trading!",
+    )
+    REGISTRATION_DENIED_MESSAGE = os.getenv(
+        "REGISTRATION_DENIED_MESSAGE",
+        "Sorry, your GridTrader Pro registration was not approved. Please contact support for more information.",
+    )
+
+    @classmethod
+    def get_setting(cls, setting_name: str, default_value=None):
+        """
+        Get a configuration setting with a default value
+        This method provides a unified way to access configuration values
+        """
+        # Check if the setting exists as a class attribute
+        if hasattr(cls, setting_name):
+            return getattr(cls, setting_name)
+
+        # Check environment variables (useful for deployment flexibility)
+        env_value = os.getenv(setting_name)
+        if env_value is not None:
+            # Try to convert to appropriate type based on default value
+            if isinstance(default_value, bool):
+                return env_value.lower() in ("true", "1", "yes", "on")
+            elif isinstance(default_value, int):
+                try:
+                    return int(env_value)
+                except ValueError:
+                    return default_value
+            elif isinstance(default_value, float):
+                try:
+                    return float(env_value)
+                except ValueError:
+                    return default_value
+            else:
+                return env_value
+
+        # Return default value if setting not found
+        return default_value
+
     @classmethod
     def validate(cls) -> bool:
         """Validate required configuration"""
