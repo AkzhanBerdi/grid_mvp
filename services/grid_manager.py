@@ -7,6 +7,7 @@ Clean production version with all debug code removed.
 Manages single advanced grids with full feature integration.
 """
 
+import asyncio
 import logging
 import time
 from typing import Dict, Optional
@@ -16,6 +17,7 @@ from binance.client import Client
 from models.grid_config import GridConfig
 from repositories.client_repository import ClientRepository
 from repositories.trade_repository import TradeRepository
+from services.async_database_manager import AsyncAnalytics, AsyncTradeRepository
 from services.compound_manager import CompoundInterestManager
 from services.decision_engine import SmartDecisionEngine
 from services.fifo_service import FIFOService
@@ -37,6 +39,10 @@ class GridManager:
         self.binance_client = binance_client
         self.client_id = client_id
         self.logger = logging.getLogger(__name__)
+
+        # Add async components
+        self.async_trades = AsyncTradeRepository()
+        self.async_analytics = AsyncAnalytics()
 
         # Core services
         self.client_repo = ClientRepository()
@@ -729,3 +735,44 @@ class GridManager:
                 "error": str(e),
                 "timestamp": time.time(),
             }
+
+    async def place_order_optimized(self, order_data: dict):
+        """Optimized order placement with async recording"""
+
+        # 1. Place order synchronously (critical operation)
+        order_result = await self.place_binance_order(order_data)
+
+        if order_result.get("success"):
+            # 2. Record trade asynchronously (non-blocking)
+            asyncio.create_task(
+                self.async_trades.record_trade_async(
+                    client_id=self.client_id,
+                    symbol=order_data["symbol"],
+                    side=order_data["side"],
+                    quantity=order_result["quantity"],
+                    price=order_result["price"],
+                    total_value=order_result["total_value"],
+                    order_id=order_result["order_id"],
+                )
+            )
+
+        return order_result
+
+    async def get_dashboard_data_fast(self):
+        """Get dashboard data without blocking trading"""
+
+        # All dashboard queries run asynchronously and concurrently
+        profit_task = self.async_analytics.get_client_profit_async(self.client_id)
+        trades_task = self.async_analytics.get_recent_trades_async(self.client_id, 5)
+
+        # Wait for both concurrently (much faster)
+        profit_data, recent_trades = await asyncio.gather(
+            profit_task, trades_task, return_exceptions=True
+        )
+
+        return {
+            "profit": profit_data if not isinstance(profit_data, Exception) else {},
+            "recent_trades": recent_trades
+            if not isinstance(recent_trades, Exception)
+            else [],
+        }

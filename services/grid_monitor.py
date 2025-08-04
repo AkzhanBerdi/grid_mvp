@@ -25,6 +25,9 @@ from typing import Dict, Optional
 
 from binance.client import Client
 
+# In your existing GridMonitoringService
+from services.async_database_manager import DatabasePerformanceMonitor
+
 
 class GridMonitoringService:
     """
@@ -1045,3 +1048,83 @@ async def monitor_multiple_grids_efficiently(
     )
 
     return {symbol: result for symbol, result in zip(grid_configs.keys(), results)}
+
+
+class EnhancedGridMonitoringService(GridMonitoringService):
+    def __init__(self, client_id: int, binance_client=None):
+        super().__init__(client_id, binance_client)
+        self.perf_monitor = DatabasePerformanceMonitor()
+
+        # Add performance tracking
+        self.performance_stats = {
+            "uptime_start": time.time(),
+            "total_monitoring_calls": 0,
+            "successful_calls": 0,
+            "failed_calls": 0,
+            "avg_response_time": 0.0,
+        }
+
+    async def monitor_single_grid_enhanced(self, symbol: str, grid_config):
+        """Enhanced monitoring with performance tracking"""
+        start_time = time.time()
+        self.performance_stats["total_monitoring_calls"] += 1
+
+        try:
+            # Your existing monitoring logic
+            result = await super().monitor_single_grid(symbol, grid_config)
+
+            # Track success
+            self.performance_stats["successful_calls"] += 1
+            execution_time = time.time() - start_time
+            self._update_avg_response_time(execution_time)
+
+            return result
+
+        except Exception:
+            self.performance_stats["failed_calls"] += 1
+            raise
+
+    def get_performance_dashboard(self):
+        """Get performance metrics for admin"""
+        uptime = time.time() - self.performance_stats["uptime_start"]
+
+        return {
+            "uptime_hours": round(uptime / 3600, 2),
+            "total_calls": self.performance_stats["total_monitoring_calls"],
+            "success_rate": round(
+                (
+                    self.performance_stats["successful_calls"]
+                    / max(self.performance_stats["total_monitoring_calls"], 1)
+                )
+                * 100,
+                2,
+            ),
+            "avg_response_time_ms": round(
+                self.performance_stats["avg_response_time"] * 1000, 2
+            ),
+            "status": "healthy"
+            if self.performance_stats["avg_response_time"] < 0.1
+            else "warning",
+        }
+
+    async def health_check(self):
+        """Production health check endpoint"""
+        try:
+            test_start = time.time()
+
+            # Quick test
+            test_result = await self.async_analytics.get_client_profit_async(
+                self.client_id
+            )
+            test_time = time.time() - test_start
+
+            return {
+                "status": "healthy",
+                "response_time_ms": round(test_time * 1000, 2),
+                "monitoring_functional": bool(test_result),
+                "performance_metrics": self.get_performance_dashboard(),
+                "timestamp": time.time(),
+            }
+
+        except Exception as e:
+            return {"status": "unhealthy", "error": str(e), "timestamp": time.time()}

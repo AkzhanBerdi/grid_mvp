@@ -28,3 +28,5 @@ aiohttp>=3.8.0
 numpy>=1.24.0
 pytz>=2023.3
 
+# Add async sqlite
+aiosqlite>=0.21.0

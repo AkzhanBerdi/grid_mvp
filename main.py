@@ -185,7 +185,7 @@ class BadTradingService:
             self.logger.error(f"Error in message handler: {e}")
 
     def setup_telegram_bot(self):
-        """Setup Telegram bot"""
+        """Updated Telegram bot setup with admin support"""
         if not self.config.TELEGRAM_BOT_TOKEN:
             self.logger.warning("Telegram bot token not configured")
             return None
@@ -195,14 +195,28 @@ class BadTradingService:
                 Application.builder().token(self.config.TELEGRAM_BOT_TOKEN).build()
             )
 
-            # Add handlers
-            self.telegram_app.add_handler(CommandHandler("start", self.telegram_start))
-            self.telegram_app.add_handler(CallbackQueryHandler(self.telegram_callback))
+            # Initialize your enhanced handler
+            from handlers.client_handler import ClientHandler
+
+            self.client_handler = ClientHandler()
+
+            # Add handlers (enhanced versions)
             self.telegram_app.add_handler(
-                MessageHandler(filters.TEXT & ~filters.COMMAND, self.telegram_message)
+                CommandHandler("start", self.client_handler.handle_start)
+            )
+            self.telegram_app.add_handler(
+                CommandHandler("admin", self.client_handler.handle_admin_command)
+            )  # NEW
+            self.telegram_app.add_handler(
+                CallbackQueryHandler(self.client_handler.handle_callback)
+            )
+            self.telegram_app.add_handler(
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND, self.client_handler.handle_message
+                )
             )
 
-            self.logger.info("📱 Telegram bot configured successfully")
+            self.logger.info("📱 Enhanced Telegram bot configured successfully")
             return self.telegram_app
 
         except Exception as e:
@@ -374,7 +388,6 @@ def main():
     print("✅ Telegram Bot Integration")
     print("✅ SQLite Analytics System")
     print("✅ Production-Ready Architecture")
-    print("🔧 SOL Inventory Manager Auto-Fix")
     print("=" * 50)
 
     # Create and start service
