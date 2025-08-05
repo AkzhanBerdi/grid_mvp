@@ -298,34 +298,53 @@ Choose an admin action:"""
         return False
 
     async def _show_pending_users(self, query):
-        """Show pending users for approval"""
+        """Show pending users for approval - FIXED VERSION"""
         pending_users = self.admin_service.get_pending_users()
 
         if not pending_users:
-            await query.edit_message_text("✅ No pending users to review.")
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        "🔙 Back to Admin Panel", callback_data="admin_refresh"
+                    )
+                ]
+            ]
+
+            await query.edit_message_text(
+                "✅ No pending users to review.",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
             return
 
-        text = "👥 **Pending User Approvals:**\n\n"
+        # Build message WITHOUT complex Markdown formatting
+        message = "👥 PENDING USER APPROVALS\n\n"
+
+        for i, user in enumerate(pending_users[:5], 1):  # Limit to 5 users
+            telegram_id = user.get("telegram_id", "Unknown")
+            username = user.get("username", "No username")
+            first_name = user.get("first_name", "Unknown")
+            reg_date = user.get("registration_date", "Unknown")[:10]  # Just date part
+
+            # Simple text formatting without complex Markdown
+            message += f"{i}. User: {first_name}\n"
+            message += f"   ID: {telegram_id}\n"
+            message += f"   Username: @{username}\n"
+            message += f"   Registered: {reg_date}\n\n"
+
+        # Simple keyboard with approve/reject buttons
         keyboard = []
 
-        for user in pending_users[:10]:  # Limit to 10 users per page
-            user_info = (
-                f"👤 {user['first_name']} (@{user['username'] or 'no_username'})\n"
-            )
-            user_info += f"🆔 `{user['telegram_id']}`\n"
-            user_info += f"📅 {user['registration_date'][:10]}\n\n"
-            text += user_info
+        for user in pending_users[:3]:  # Limit to 3 users to avoid message limits
+            telegram_id = user.get("telegram_id")
+            first_name = user.get("first_name", "User")[:10]  # Truncate name
 
-            # Add approve/reject buttons
             keyboard.append(
                 [
                     InlineKeyboardButton(
-                        f"✅ Approve {user['first_name']}",
-                        callback_data=f"approve_{user['telegram_id']}",
+                        f"✅ {first_name}", callback_data=f"approve_{telegram_id}"
                     ),
                     InlineKeyboardButton(
-                        f"❌ Reject {user['first_name']}",
-                        callback_data=f"reject_{user['telegram_id']}",
+                        f"❌ {first_name}", callback_data=f"reject_{telegram_id}"
                     ),
                 ]
             )
@@ -337,11 +356,32 @@ Choose an admin action:"""
                 )
             ]
         )
-        reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await query.edit_message_text(
-            text, reply_markup=reply_markup, parse_mode="Markdown"
-        )
+        try:
+            await query.edit_message_text(
+                message,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=None,  # No Markdown parsing to avoid errors
+            )
+        except Exception:
+            # Fallback to even simpler message
+            simple_message = (
+                f"Pending users: {len(pending_users)}\nUse /admin to manage users."
+            )
+
+            await query.edit_message_text(
+                simple_message,
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "🔙 Admin Panel", callback_data="admin_refresh"
+                            )
+                        ]
+                    ]
+                ),
+                parse_mode=None,
+            )
 
     async def _approve_user_callback(self, query, user_id: int):
         """Handle user approval"""
@@ -624,10 +664,13 @@ Contact @admin for technical support."""
         )
         return True
 
+    # Fix for utils/base_handler.py
+    # Replace your _handle_secret_input method with this:
+
     async def _handle_secret_input(
         self, update, client_id: int, text: str, state: dict
     ) -> bool:
-        """Handle secret key input"""
+        """Handle secret key input - FIXED VERSION"""
         secret_key = text.strip()
         if len(secret_key) < 20:
             await update.message.reply_text(
@@ -636,28 +679,57 @@ Contact @admin for technical support."""
             return True
 
         try:
-            # Save API keys
+            # Get the API key from state
+            api_key = state.get("api_key", "").strip()
+
+            if not api_key:
+                await update.message.reply_text(
+                    "❌ API key missing. Please restart setup."
+                )
+                del self.client_states[client_id]
+                return True
+
+            # Get client from database
             client = self.client_repo.get_client(client_id)
-            client.api_key = state.get("api_key")
-            client.secret_key = secret_key
-            self.client_repo.update_client(client)
+            if not client:
+                await update.message.reply_text(
+                    "❌ Client not found. Please try /start again."
+                )
+                del self.client_states[client_id]
+                return True
 
-            # Clear state
-            del self.client_states[client_id]
+            # CRITICAL FIX: Use correct field names
+            client.binance_api_key = api_key  # ✅ FIXED
+            client.binance_secret_key = secret_key  # ✅ FIXED
 
-            await update.message.reply_text(
-                "✅ **API Keys Saved Successfully**\n\n"
-                "🔒 Your keys are encrypted and secure.\n"
-                "Ready to start trading!"
-            )
+            # Save to database
+            success = self.client_repo.update_client(client)
 
-            await self.show_dashboard(update, client)
+            if success:
+                # Clear state
+                del self.client_states[client_id]
+
+                await update.message.reply_text(
+                    "✅ **API Keys Saved Successfully!**\n\n"
+                    "🔒 Your keys are encrypted and secure.\n"
+                    "Ready to start trading!"
+                )
+
+                await self.show_dashboard(update, client)
+            else:
+                await update.message.reply_text(
+                    "❌ Error saving API keys to database. Please try again."
+                )
+                del self.client_states[client_id]
 
         except Exception as e:
             self.logger.error(f"Error saving API keys: {e}")
             await update.message.reply_text(
                 "❌ Error saving API keys. Please try again."
             )
+            # Clean up state
+            if client_id in self.client_states:
+                del self.client_states[client_id]
 
         return True
 
@@ -896,7 +968,7 @@ Please check manually or contact support."""
             if extra_buttons:
                 keyboard.extend(extra_buttons)
 
-            # Send message
+            # Send _handle_api_input
             if hasattr(update, "message") and update.message:
                 await update.message.reply_text(
                     message,

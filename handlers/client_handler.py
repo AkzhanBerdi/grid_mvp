@@ -156,6 +156,7 @@ class ClientHandler(BaseClientHandler):
 
         # API status
         has_api_keys = bool(client.binance_api_key and client.binance_secret_key)
+
         api_status = "✅ Connected" if has_api_keys else "❌ Not Set"
 
         # Active grids info
