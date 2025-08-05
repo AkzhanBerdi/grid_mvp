@@ -38,83 +38,158 @@ class UserRegistryService:
         self.max_users = Config.get_setting("MAX_USERS", 50)
         self.registration_open = Config.get_setting("REGISTRATION_OPEN", True)
 
-        self._ensure_tables()
+        # Initialize with graceful handling
+        self._initialize_registry_tables()
 
-    def _ensure_tables(self):
-        """Ensure required tables exist"""
+    def _initialize_registry_tables(self):
+        """Initialize registry tables with graceful error handling"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                # Add registration columns to clients table if they don't exist
-                try:
-                    conn.execute("SELECT registration_status FROM clients LIMIT 1")
-                except sqlite3.OperationalError:
-                    # Add registration columns
-                    conn.execute(
-                        "ALTER TABLE clients ADD COLUMN registration_status TEXT DEFAULT 'approved'"
-                    )
-                    conn.execute(
-                        "ALTER TABLE clients ADD COLUMN registration_date DATETIME DEFAULT CURRENT_TIMESTAMP"
-                    )
-                    conn.execute("ALTER TABLE clients ADD COLUMN approved_by INTEGER")
-                    conn.execute(
-                        "ALTER TABLE clients ADD COLUMN registration_notes TEXT"
-                    )
-
-                # Create admin permissions table
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS admin_permissions (
-                        telegram_id INTEGER PRIMARY KEY,
-                        permission_level TEXT DEFAULT 'admin',
-                        granted_by INTEGER,
-                        granted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (granted_by) REFERENCES admin_permissions (telegram_id)
-                    )
-                """)
-
-                # Create user activity table
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS user_activity (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        client_id INTEGER NOT NULL,
-                        activity_type TEXT NOT NULL,
-                        activity_data TEXT,
-                        ip_address TEXT,
-                        user_agent TEXT,
-                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (client_id) REFERENCES clients (telegram_id)
-                    )
-                """)
-
-                # Create indexes
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_user_activity_client_id ON user_activity(client_id)"
+            # Check if database file exists and has basic structure
+            if not self._database_ready():
+                self.logger.debug(
+                    "Database not ready yet, skipping registry table initialization"
                 )
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_user_activity_type ON user_activity(activity_type)"
-                )
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_user_activity_timestamp ON user_activity(timestamp)"
-                )
+                return
 
-                # Add default admin if configured
-                if hasattr(Config, "ADMIN_TELEGRAM_ID") and Config.ADMIN_TELEGRAM_ID:
-                    conn.execute(
-                        """
-                        INSERT OR IGNORE INTO admin_permissions (telegram_id, permission_level)
-                        VALUES (?, 'admin')
-                    """,
-                        (Config.ADMIN_TELEGRAM_ID,),
-                    )
-
-                conn.commit()
-                self.logger.info("✅ User registry tables initialized")
+            self._ensure_tables()
+            self.logger.info("✅ User registry tables initialized")
 
         except Exception as e:
-            self.logger.error(f"❌ Error initializing registry tables: {e}")
+            # Log as debug during initialization, not error
+            self.logger.debug(f"Registry tables initialization deferred: {e}")
+
+    def _database_ready(self) -> bool:
+        """Check if the main database structure exists"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                # Check if the main clients table exists
+                cursor.execute("""
+                    SELECT name FROM sqlite_master 
+                    WHERE type='table' AND name='clients'
+                """)
+                return cursor.fetchone() is not None
+        except Exception:
+            return False
+
+    def _ensure_tables(self):
+        """Ensure required tables exist - only called when database is ready"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                # Check and add registration columns to clients table
+                self._add_registration_columns_if_missing(conn)
+
+                # Create admin permissions table
+                self._create_admin_permissions_table(conn)
+
+                # Create user activity table
+                self._create_user_activity_table(conn)
+
+                # Add default admin if configured
+                self._add_default_admin(conn)
+
+                conn.commit()
+
+        except Exception as e:
+            self.logger.error(f"❌ Error setting up registry tables: {e}")
+            raise
+
+    def _add_registration_columns_if_missing(self, conn):
+        """Add registration columns to clients table if they don't exist"""
+        cursor = conn.cursor()
+
+        # Get existing columns
+        cursor.execute("PRAGMA table_info(clients)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+
+        # Add missing columns
+        columns_to_add = [
+            ("registration_status", "TEXT DEFAULT 'approved'"),
+            ("registration_date", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
+            ("approved_by", "INTEGER"),
+            ("registration_notes", "TEXT"),
+        ]
+
+        for column_name, column_def in columns_to_add:
+            if column_name not in existing_columns:
+                conn.execute(
+                    f"ALTER TABLE clients ADD COLUMN {column_name} {column_def}"
+                )
+                self.logger.debug(f"Added column {column_name} to clients table")
+
+    def _create_admin_permissions_table(self, conn):
+        """Create admin permissions table"""
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS admin_permissions (
+                telegram_id INTEGER PRIMARY KEY,
+                permission_level TEXT DEFAULT 'admin',
+                granted_by INTEGER,
+                granted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (granted_by) REFERENCES admin_permissions (telegram_id)
+            )
+        """)
+
+    def _create_user_activity_table(self, conn):
+        """Create user activity table with indexes"""
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_activity (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id INTEGER NOT NULL,
+                activity_type TEXT NOT NULL,
+                activity_data TEXT,
+                ip_address TEXT,
+                user_agent TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (client_id) REFERENCES clients (telegram_id)
+            )
+        """)
+
+        # Create indexes
+        indexes = [
+            ("idx_user_activity_client_id", "user_activity(client_id)"),
+            ("idx_user_activity_type", "user_activity(activity_type)"),
+            ("idx_user_activity_timestamp", "user_activity(timestamp)"),
+        ]
+
+        for index_name, index_def in indexes:
+            conn.execute(f"CREATE INDEX IF NOT EXISTS {index_name} ON {index_def}")
+
+    def _add_default_admin(self, conn):
+        """Add default admin if configured"""
+        if hasattr(Config, "ADMIN_TELEGRAM_ID") and Config.ADMIN_TELEGRAM_ID:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO admin_permissions (telegram_id, permission_level)
+                VALUES (?, 'admin')
+            """,
+                (Config.ADMIN_TELEGRAM_ID,),
+            )
+
+    def ensure_registry_ready(self):
+        """Public method to ensure registry is ready - can be called after main DB setup"""
+        if not hasattr(self, "_registry_initialized"):
+            self._initialize_registry_tables()
+            self._registry_initialized = True
+
+    def complete_initialization(self):
+        """Complete the initialization after main database is ready"""
+        if self._database_ready():
+            try:
+                self._ensure_tables()
+                self.logger.info("✅ User registry initialization completed")
+            except Exception as e:
+                self.logger.error(f"❌ Failed to complete registry initialization: {e}")
+        else:
+            self.logger.warning(
+                "⚠️ Main database not ready, registry initialization skipped"
+            )
 
     async def register_user(self, user_data) -> Dict:
         """Register a new user"""
         try:
+            # Ensure registry is ready before registering users
+            self.ensure_registry_ready()
+
             telegram_id = user_data.id
             username = user_data.username or f"user_{telegram_id}"
             first_name = user_data.first_name or "Unknown"
@@ -846,6 +921,73 @@ Choose an admin action:"""
 
         await query.edit_message_text(
             text, reply_markup=reply_markup, parse_mode="Markdown"
+        )
+
+    async def show_detailed_stats(self, query):
+        """Show detailed user statistics"""
+        stats = self.admin_service.get_user_statistics()
+
+        stats_text = f"""📊 *Detailed User Statistics*
+
+*Registration Status:*
+✅ Approved: {stats.get("approved_users", 0)}
+⏳ Pending: {stats.get("pending_users", 0)}
+❌ Rejected: {stats.get("rejected_users", 0)}
+⚠️ Suspended: {stats.get("suspended_users", 0)}
+🚫 Banned: {stats.get("banned_users", 0)}
+
+*Activity Metrics:*
+📈 Recent (7 days): {stats.get("recent_registrations", 0)} new registrations
+⚡ Active Traders: {stats.get("active_traders", 0)} users with API keys
+💰 Total Users: {sum(v for k, v in stats.items() if k.endswith("_users"))}
+
+*System Health:*
+🟢 Registration: {"Open" if self.registry.registration_open else "Closed"}
+👥 User Limit: {self.registry.get_user_count()}/{self.registry.max_users}
+🤖 Auto Approve: {"Enabled" if self.registry.auto_approve else "Disabled"}"""
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🔙 Back to Admin Panel", callback_data="admin_refresh"
+                )
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(
+            stats_text, reply_markup=reply_markup, parse_mode="Markdown"
+        )
+
+    async def show_admin_settings(self, query):
+        """Show admin settings panel"""
+        settings_text = f"""⚙️ *Admin Settings*
+
+*Current Configuration:*
+🔓 Registration Open: {"Yes" if self.registry.registration_open else "No"}
+🤖 Auto Approve: {"Enabled" if self.registry.auto_approve else "Disabled"}
+👥 Max Users: {self.registry.max_users}
+🔔 Notifications: {"Enabled" if self.registry.notifier.enabled else "Disabled"}
+
+*Quick Actions:*
+Use these commands to modify settings:
+• `/admin_toggle_registration` - Toggle registration
+• `/admin_toggle_auto_approve` - Toggle auto approval
+• `/admin_set_max_users <number>` - Set user limit
+
+*Note:* Settings changes require bot restart to take full effect."""
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🔙 Back to Admin Panel", callback_data="admin_refresh"
+                )
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(
+            settings_text, reply_markup=reply_markup, parse_mode="Markdown"
         )
 
     async def approve_user_callback(self, query, user_id: int):
