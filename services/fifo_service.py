@@ -941,7 +941,7 @@ class FIFOService:
         level: int = None,
     ) -> bool:
         """
-        Handle order fill with FIFO tracking and notifications (enhanced with async)
+        Handle order fill with FIFO tracking and modern notifications
         """
         try:
             # Skip notifications during startup to prevent spam
@@ -970,31 +970,40 @@ class FIFOService:
             )
             total_profit = profit_data.get("total_profit", 0)
 
-            # Format notification message
+            # 🚀 MODERN NOTIFICATION FORMAT WITH EMOJIS
             order_value = quantity * price
             profit_estimate = 0
+
             if side == "SELL":
                 profit_estimate = order_value * 0.025  # Rough estimate
 
             # Smart quantity formatting (ADA vs others)
+            asset_name = symbol.replace("USDT", "")
             if symbol == "ADAUSDT":
                 qty_str = f"{quantity:.1f}"
             else:
                 qty_str = f"{quantity:.4f}"
 
-            message = f"""{symbol} {side} ORDER FILLED
+            # Choose appropriate emoji based on trade side
+            side_emoji = "🟢" if side == "SELL" else "🔵"
+            action_text = "SOLD" if side == "SELL" else "BOUGHT"
 
-Amount: {qty_str} @ ${price:.4f}
-Value: ${order_value:.2f}"""
+            # Build modern notification message
+            message = f"""{side_emoji} **{action_text} {asset_name}**
 
-            if level:
-                message += f"\nLevel: {level}"
+    📊 **{symbol}** - Level {level if level else "Market"}
+    💰 **Amount:** {qty_str} @ ${price:.6f}
+    💵 **Value:** ${order_value:.2f}"""
 
             if profit_estimate > 0:
-                message += f"\nEstimated Profit: ${profit_estimate:.2f}"
+                message += f"\n📈 **Est. Profit:** ${profit_estimate:.2f}"
 
-            message += f"\nTotal Profit: ${total_profit:.2f}"
-            message += f"\nTime: {datetime.now().strftime('%H:%M:%S')}"
+            message += f"""
+    💎 **Total Profit:** ${total_profit:.2f}
+    🆔 **Order ID:** {order_id or "N/A"}
+    🕐 **Time:** {datetime.now().strftime("%H:%M:%S")}
+
+    ✅ Order executed successfully!"""
 
             # Send notification if enabled
             success = True

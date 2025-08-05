@@ -478,7 +478,7 @@ class GridTradingEngine:
     async def _create_replacement_order(
         self, symbol: str, level: dict, original_side: str, grid_config
     ):
-        """🚀 ENHANCED: Create replacement order with quick profit capture logic"""
+        """🚀 ENHANCED: Create replacement order with quick profit capture logic + notifications"""
         try:
             # Validate grid config
             if not validate_grid_config(grid_config, f"replacement_{symbol}"):
@@ -637,6 +637,18 @@ class GridTradingEngine:
                         f"(ID: {order['orderId']}) - Grid level {level_number}"
                     )
 
+                # 🚨 NOTIFICATION: Send Telegram notification for order replacement
+                await self._send_order_replacement_notification(
+                    symbol=symbol,
+                    original_side=original_side,
+                    replacement_side=replacement_side,
+                    level=level,
+                    order=order,
+                    fill_price=actual_fill_price,
+                    new_price=replacement_price,
+                    quantity=formatted_quantity,
+                )
+
             except Exception as order_error:
                 # Release reservation on failure
                 self.inventory_manager.release_reservation(
@@ -728,3 +740,52 @@ class GridTradingEngine:
                 "grid_utilization": 0,
                 "replacement_system": "error",
             }
+
+    async def _send_order_replacement_notification(
+        self,
+        symbol: str,
+        original_side: str,
+        replacement_side: str,
+        level: dict,
+        order: dict,
+        fill_price: float,
+        new_price: float,
+        quantity: float,
+    ):
+        """Send Telegram notification for successful order replacement"""
+        try:
+            # Import here to avoid circular imports
+            from services.telegram_notifier import TelegramNotifier
+
+            notifier = TelegramNotifier()
+            if not notifier.enabled:
+                return
+
+            # Calculate expected profit for SELL orders
+            expected_profit = ""
+            if replacement_side == "SELL" and fill_price:
+                profit_per_unit = new_price - fill_price
+                total_expected_profit = profit_per_unit * quantity
+                expected_profit = f" (Expected profit: ${total_expected_profit:.2f})"
+
+            # Build notification message
+            asset_name = symbol.replace("USDT", "")
+            level_info = (
+                f"Level {abs(level.get('level', 0))}" if level.get("level") else "Grid"
+            )
+
+            message = f"""🔄 **ORDER REPLACED**
+
+    📊 **{asset_name}/USDT** - {level_info}
+    🟢 **Filled:** {original_side} @ ${fill_price:.6f}
+    🔵 **New:** {replacement_side} @ ${new_price:.6f}
+    📦 **Quantity:** {quantity:.4f} {asset_name}
+    🆔 **Order ID:** {order["orderId"]}{expected_profit}
+
+    ✅ Replacement successful!"""
+
+            await notifier.send_message(message)
+
+        except Exception as e:
+            # Don't let notification errors affect trading
+            self.logger.error(f"❌ Notification error: {e}")

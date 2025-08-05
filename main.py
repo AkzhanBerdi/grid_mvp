@@ -336,31 +336,6 @@ class BadTradingService:
         finally:
             self.running = False
 
-    def get_service_status(self):  # not used !?
-        """Get service status"""
-        try:
-            health_status = self.network_recovery.get_health_status()
-
-            # Get active grids count
-            active_grids = 0
-            try:
-                grids_data = self.grid_orchestrator.get_all_active_grids()
-                if grids_data and "system_summary" in grids_data:
-                    active_grids = grids_data["system_summary"]["total_active_grids"]
-            except Exception:
-                pass
-
-            return {
-                "running": self.running,
-                "network_health": health_status,
-                "active_grids": active_grids,
-                "telegram_bot": self.telegram_app is not None,
-                "error_count": self._error_count,
-            }
-
-        except Exception as e:
-            return {"error": str(e)}
-
 
 def main():
     """Entry point"""
