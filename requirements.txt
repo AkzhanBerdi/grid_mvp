@@ -1,32 +1,19 @@
-# requirements.txt
+# requirements.txt - Corrected for VPS Deployment
 # Core Dependencies
 python-telegram-bot==20.7
 python-binance==1.0.19
 python-dotenv==1.0.0
 
-# Database
-# sqlite3 is built into Python
+# Database (sqlite3 is built into Python)
+aiosqlite>=0.21.0
 
 # Encryption
 cryptography>=41.0.0
 
-# Async support
-asyncio
-
-# Utilities
+# HTTP and async support
 requests>=2.31.0
 aiohttp>=3.8.0
 
-# Logging and monitoring
+# Logging and monitoring (optional but recommended)
 structlog>=23.0.0
-
-# Optional: For enhanced monitoring
 psutil>=5.9.0
-
-# Add to requirements.txt
-aiohttp>=3.8.0
-numpy>=1.24.0
-pytz>=2023.3
-
-# Add async sqlite
-aiosqlite>=0.21.0
