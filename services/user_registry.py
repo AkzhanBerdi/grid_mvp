@@ -227,15 +227,14 @@ class UserRegistryService:
             else:
                 registration_status = "approved" if self.auto_approve else "pending"
 
-            # Create the client
+            # Create the client - simplified registration
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute(
                     """
                     INSERT INTO clients (
                         telegram_id, username, first_name, status, grid_status,
-                        registration_status, registration_date, total_capital,
-                        risk_level, trading_pairs, grid_spacing, grid_levels, order_size
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        registration_status, registration_date
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
                         telegram_id,
@@ -245,12 +244,6 @@ class UserRegistryService:
                         "inactive",
                         registration_status,
                         datetime.now().isoformat(),
-                        0.0,
-                        "moderate",
-                        "ADA,AVAX",
-                        0.025,
-                        8,
-                        50.0,
                     ),
                 )
                 conn.commit()
@@ -315,7 +308,7 @@ class UserRegistryService:
                     """
                     SELECT telegram_id, username, first_name, status, grid_status,
                            registration_status, registration_date, approved_by,
-                           registration_notes, total_capital
+                           registration_notes
                     FROM clients WHERE telegram_id = ?
                 """,
                     (telegram_id,),
@@ -335,7 +328,7 @@ class UserRegistryService:
                     "registration_date": row[6],
                     "approved_by": row[7],
                     "registration_notes": row[8],
-                    "total_capital": row[9] or 0.0,
+                    # Remove total_capital from registration info - it's a trading setting
                 }
 
         except Exception as e:
@@ -688,11 +681,11 @@ Your account has been created and activated successfully.
 *Your Details:*
 🆔 Client ID: `{client_info["telegram_id"]}`
 📅 Registered: {client_info["registration_date"][:10]}
-💰 Initial Capital: ${client_info["total_capital"]}
+✅ Status: Approved
 
 *Next Steps:*
 1. 🔑 Setup your Binance API keys
-2. 💰 Configure your trading capital
+2. 💰 Configure your trading capital  
 3. 🎯 Choose your trading pairs
 4. 🚀 Start grid trading
 
@@ -726,9 +719,15 @@ Please be patient while we process your registration."""
 
     async def show_main_dashboard(self, update: Update, client_info: Dict):
         """Show main dashboard for approved users"""
-        # Check if user has API keys
-        has_api_keys = bool(client_info.get("binance_api_key"))
-        grid_status = client_info.get("grid_status", "inactive")
+        # Get actual client data for API keys only
+        from repositories.client_repository import ClientRepository
+
+        client_repo = ClientRepository()
+        client = client_repo.get_client(client_info["telegram_id"])
+
+        # Only check API keys - capital is set when starting trading
+        has_api_keys = bool(client and client.binance_api_key)
+        grid_status = client.grid_status if client else "inactive"
 
         # Create dynamic keyboard based on user state
         keyboard = []
@@ -738,6 +737,7 @@ Please be patient while we process your registration."""
                 [InlineKeyboardButton("🔑 Setup API Keys", callback_data="setup_api")]
             )
         else:
+            # Once API keys are set, user can start trading (capital set during trading setup)
             if grid_status == "inactive":
                 keyboard.append(
                     [
@@ -766,7 +766,7 @@ Please be patient while we process your registration."""
 
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # Get quick stats
+        # Simplified status display
         api_status = "✅ Connected" if has_api_keys else "❌ Not Setup"
         grid_status_emoji = "🟢 Active" if grid_status == "active" else "🔴 Inactive"
 
@@ -774,11 +774,12 @@ Please be patient while we process your registration."""
 
 👤 *User:* {client_info["first_name"]}
 🆔 *Client ID:* `{client_info["telegram_id"]}`
-💰 *Capital:* ${client_info["total_capital"]}
 
-*System Status:*
+*Account Status:*
 🔑 API Keys: {api_status}
 ⚡ Grid Trading: {grid_status_emoji}
+
+{"✅ Ready to trade!" if has_api_keys else "🔧 Setup your API keys to start trading"}
 
 Choose an option below:"""
 
@@ -1086,16 +1087,31 @@ class EnhancedClientHandler:
 
     async def show_user_dashboard(self, query, client_info: Dict):
         """Show user dashboard"""
-        # Your existing dashboard logic here
+        # Get actual client data for trading info
+        from repositories.client_repository import ClientRepository
+
+        client_repo = ClientRepository()
+        client = client_repo.get_client(client_info["telegram_id"])
+
+        # Get real trading data
+        capital = client.total_capital if client else 0.0
+        capital_display = f"${capital:,.2f}" if capital > 0 else "❌ Not Set"
+        grid_status = client.grid_status if client else "inactive"
+
         dashboard_text = f"""📊 *Trading Dashboard*
 
 👤 User: {client_info["first_name"]}
-💰 Capital: ${client_info["total_capital"]}
-⚡ Status: {client_info["grid_status"].title()}
+💰 Capital: {capital_display}
+⚡ Grid Status: {grid_status.title()}
 
-🔧 Dashboard features coming soon..."""
+🔧 Use the buttons below to manage your trading"""
 
-        await query.edit_message_text(dashboard_text, parse_mode="Markdown")
+        keyboard = [[InlineKeyboardButton("🔙 Back to Main", callback_data="home")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(
+            dashboard_text, reply_markup=reply_markup, parse_mode="Markdown"
+        )
 
     async def show_api_setup(self, query, client_info: Dict):
         """Show API setup instructions"""
@@ -1121,28 +1137,58 @@ Type: `/setapi YOUR_API_KEY YOUR_SECRET_KEY`"""
 
     async def show_profit_report(self, query, client_info: Dict):
         """Show profit report"""
-        # Your existing profit calculation logic here
-        profit_text = f"""💰 *Profit Report*
+        # Get actual client data for profit calculations
+        from repositories.client_repository import ClientRepository
+
+        client_repo = ClientRepository()
+        client = client_repo.get_client(client_info["telegram_id"])
+
+        if not client or not client.binance_api_key:
+            profit_text = f"""💰 *Profit Report*
 
 👤 User: {client_info["first_name"]}
 
-📊 Total Profit: Coming soon...
-📈 Recent Performance: Coming soon...
-💹 Best Performing Pair: Coming soon...
+⚠️ **Setup Required**
+Please setup your API keys and trading capital first.
 
-Use your existing analytics here."""
+📊 Profit tracking will begin once you start trading."""
+        else:
+            profit_text = f"""💰 *Profit Report*
 
-        await query.edit_message_text(profit_text, parse_mode="Markdown")
+👤 User: {client_info["first_name"]}
+💰 Capital: ${client.total_capital:,.2f}
+
+📊 Total Profit: Available after first trades
+📈 Recent Performance: Tracking will begin soon
+💹 Best Performing Pair: Data pending
+
+*Note: Detailed analytics coming soon*"""
+
+        keyboard = [[InlineKeyboardButton("🔙 Back to Main", callback_data="home")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(
+            profit_text, reply_markup=reply_markup, parse_mode="Markdown"
+        )
 
     async def show_user_settings(self, query, client_info: Dict):
         """Show user settings"""
+        # Get actual client data for settings
+        from repositories.client_repository import ClientRepository
+
+        client_repo = ClientRepository()
+        client = client_repo.get_client(client_info["telegram_id"])
+
+        capital = client.total_capital if client else 0.0
+        risk_level = client.risk_level if client else "moderate"
+
         settings_text = f"""⚙️ *User Settings*
 
 👤 User: {client_info["first_name"]}
-💰 Capital: ${client_info["total_capital"]}
-🎯 Risk Level: {client_info.get("risk_level", "moderate")}
+💰 Capital: ${capital:,.2f}
+🎯 Risk Level: {risk_level.title()}
 
-🔧 Settings features coming soon..."""
+🔧 Use /settings to modify trading parameters"""
 
         await query.edit_message_text(settings_text, parse_mode="Markdown")
 

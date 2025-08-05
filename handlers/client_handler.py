@@ -291,8 +291,20 @@ Professional FIFO accounting for accurate profits.
         try:
             client = self.client_repo.get_client(client_id)
 
+            # Get grid status for unified status display
+            has_active_grids = False
+            try:
+                grid_status = await self.grid_orchestrator.get_client_grid_status(
+                    client_id
+                )
+                has_active_grids = len(grid_status.get("active_grids", {})) > 0
+            except Exception as e:
+                self.logger.warning(f"Could not get grid status: {e}")
+
             if self.fifo_service:
-                message = self._build_fifo_performance_message(client_id)
+                message = self._build_fifo_performance_message(
+                    client_id, has_active_grids
+                )
             else:
                 message = self._build_basic_performance_message(client)
 
@@ -681,7 +693,9 @@ Ready to launch?"""
 
         return keyboard
 
-    def _build_fifo_performance_message(self, client_id: int) -> str:
+    def _build_fifo_performance_message(
+        self, client_id: int, has_active_grids: bool = False
+    ) -> str:
         """Build FIFO performance message"""
         performance = self.fifo_service.calculate_fifo_profit_with_cost_basis(client_id)
 
@@ -696,29 +710,39 @@ Ready to launch?"""
                 "volume_display": "Calculating...",
                 "win_rate_display": f"{performance.get('win_rate', 0):.1f}%",
                 "efficiency_display": "Active",
-                "active_grids_display": "1",
-                "performance_summary": "Trading Active",
-                "multiplier_display": "1.0x",
+                "active_grids_display": "1" if has_active_grids else "0",
             }
+
+        # UNIFIED STATUS LOGIC
+        current_multiplier = performance.get("current_multiplier", 1.0)
+
+        if has_active_grids:
+            unified_status = "Trading Active"
+            compound_display = (
+                f"{current_multiplier:.1f}x (ACTIVE)"
+                if current_multiplier > 1.0
+                else "1.0x (ACTIVE)"
+            )
+            compound_emoji = "🟢"
+        else:
+            unified_status = "Ready to Trade"
+            compound_display = "1.0x (INACTIVE)"
+            compound_emoji = "⚪"
 
         return f"""📈 **Smart Trading Performance**
 
-💰 **Profit Analysis:**
-{display_metrics["total_profit_display"]}
-Recent 24h: {display_metrics["recent_profit_display"]}
+    💰 **Profit Analysis:**
+    {display_metrics["total_profit_display"]}
+    Recent 24h: {display_metrics["recent_profit_display"]}
 
-📊 **Trading Statistics:**
-Total Volume: {display_metrics["volume_display"]}
-Win Rate: {display_metrics["win_rate_display"]}
-Efficiency: {display_metrics["efficiency_display"]}
-Active Grids: {display_metrics["active_grids_display"]}
+    📊 **Trading Statistics:**
+    Total Volume: {display_metrics["volume_display"]}
+    Win Rate: {display_metrics["win_rate_display"]}
+    Efficiency: {display_metrics["efficiency_display"]}
+    Active Grids: {display_metrics["active_grids_display"]}
 
-🎯 **Performance Summary:**
-{display_metrics["performance_summary"]}
-
-🔄 **Compound System:**
-Current Multiplier: {display_metrics["multiplier_display"]}
-Status: {"🟢 ACTIVE" if performance.get("current_multiplier", 1.0) > 1.0 else "⚪ INACTIVE"}"""
+    🎯 **Status:** {unified_status}
+    🔄 **Compound:** {compound_display} {compound_emoji}"""
 
     def _build_basic_performance_message(self, client) -> str:
         """Build basic performance message when FIFO unavailable"""

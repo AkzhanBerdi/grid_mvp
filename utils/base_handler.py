@@ -789,16 +789,9 @@ Contact @admin for technical support."""
 
         has_api_keys = bool(client.binance_api_key and client.binance_secret_key)
         api_status = "✅ Connected" if has_api_keys else "❌ Not Set"
-        capital_status = (
-            f"${client.total_capital:,.2f}"
-            if client.total_capital > 0
-            else "❌ Not Set"
-        )
-
         message = f"""⚙️ **Account Settings**
 
 **API Connection:** {api_status}
-**Trading Capital:** {capital_status}
 **Risk Level:** {client.risk_level.title()}
 
 **Account Status:** {"✅ Ready" if client.can_start_grid() else "❌ Setup Required"}"""
@@ -807,10 +800,6 @@ Contact @admin for technical support."""
         if not has_api_keys:
             keyboard.append(
                 [InlineKeyboardButton("🔐 Setup API Keys", callback_data="setup_api")]
-            )
-        if client.total_capital <= 0:
-            keyboard.append(
-                [InlineKeyboardButton("💰 Set Capital", callback_data="set_capital")]
             )
         keyboard.append([InlineKeyboardButton("🏠 Home", callback_data="home")])
 
@@ -880,19 +869,15 @@ Please check manually or contact support."""
             client = self.client_repo.get_client(client_id)
 
             has_api_keys = bool(client.binance_api_key and client.binance_secret_key)
-            setup_status = (
-                "✅ Ready"
-                if (has_api_keys and client.total_capital > 0)
-                else "⚙️ Setup Required"
-            )
+            # FIXED: Only check API keys, not capital
+            setup_status = "✅ Ready to Trade" if has_api_keys else "⚙️ Setup Required"
 
             message = f"""🏠 **GridTrader Pro Home**
 
-**Status:** {setup_status}
-**Capital:** ${client.total_capital:,.2f}
+    **Status:** {setup_status}
 
-**Quick Commands:**
-`ETH 1000` • `SOL 800` • `ADA 600`"""
+    **Quick Commands:**
+    `ETH 1000` • `SOL 800` • `ADA 600`"""
 
             keyboard = [
                 [InlineKeyboardButton("⚙️ Settings", callback_data="show_settings")],
@@ -916,11 +901,10 @@ Please check manually or contact support."""
     async def show_dashboard(
         self, update, client, extra_buttons: Optional[List] = None
     ):
-        """Show main dashboard - enhanced with registration check"""
+        """Show main dashboard - clean version"""
         try:
             # Check user access first
             has_access, access_status = self._check_user_access(client.telegram_id)
-
             if not has_access:
                 client_info = self.user_registry.get_client_registration_info(
                     client.telegram_id
@@ -928,33 +912,34 @@ Please check manually or contact support."""
                 await self._handle_access_denied(update, access_status, client_info)
                 return
 
-            # Get grid status safely
-            grid_status = {}
+            # Get API status
+            has_api_keys = bool(client.binance_api_key and client.binance_secret_key)
+            api_status = "✅ Connected" if has_api_keys else "❌ Not Set"
+
+            # Get grid status safely - CLEAN VERSION
+            active_grids_count = 0
             try:
                 grid_status = await self.grid_orchestrator.get_client_grid_status(
                     client.telegram_id
                 )
+                active_grids = grid_status.get("active_grids", {})
+                active_grids_count = len(active_grids) if active_grids else 0
             except Exception as e:
                 self.logger.warning(f"Grid status error: {e}")
 
-            # Build basic dashboard
-            has_api_keys = bool(client.binance_api_key and client.binance_secret_key)
-            api_status = "✅ Connected" if has_api_keys else "❌ Not Set"
-
-            active_grids = grid_status.get("active_grids", {})
-            active_info = (
-                f"\n🤖 Active Grids: {len(active_grids)}"
-                if active_grids
-                else "\n💤 No active grids"
+            # Build clean message
+            grid_info = (
+                f"🤖 Active Grids: {active_grids_count}"
+                if active_grids_count > 0
+                else "💤 No active grids"
             )
 
             message = f"""📊 **GridTrader Pro Dashboard**
 
-**Account Status:**
-🔐 API Keys: {api_status}
-💰 Capital: ${client.total_capital:,.2f}{active_info}
+    🔐 API Keys: {api_status}
+    ⚡ Grid Trading: {grid_info}
 
-**Quick Trading:** Type `ADA 1000` or `ETH 500`"""
+    **Quick Trading:** Type `ADA 1000` or `ETH 500`"""
 
             keyboard = [
                 [InlineKeyboardButton("⚙️ Settings", callback_data="show_settings")],
@@ -968,7 +953,7 @@ Please check manually or contact support."""
             if extra_buttons:
                 keyboard.extend(extra_buttons)
 
-            # Send _handle_api_input
+            # Send message
             if hasattr(update, "message") and update.message:
                 await update.message.reply_text(
                     message,
